@@ -1,11 +1,13 @@
-// One input: HOLD. Pointer anywhere on the stage, touch, Space, or mouse.
-// UI buttons stop propagation so they never count as a dive.
+// Inputs: HOLD to dive (pointer/touch on the stage), Space = jump,
+// Shift/Enter = boost, R = restart. UI buttons stop propagation.
 
 export class Input {
   private held = false
   private forced: boolean | null = null // QA override
   onFirstInput: (() => void) | null = null
   onRestart: (() => void) | null = null
+  onJump: (() => void) | null = null
+  onBoost: (() => void) | null = null
   private fired = false
 
   constructor(stage: HTMLElement) {
@@ -24,29 +26,21 @@ export class Input {
 
     window.addEventListener('keydown', (e) => {
       if (e.repeat) return
-      if (e.code === 'Space') {
-        this.held = true
-        this.fire()
-        e.preventDefault()
-      }
-      if (e.code === 'KeyR') this.onRestart?.()
-    })
-    window.addEventListener('keyup', (e) => {
-      if (e.code === 'Space') this.held = false
+      if (e.code === 'Space') { this.jump(); e.preventDefault() }
+      else if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'Enter') { this.boost(); e.preventDefault() }
+      else if (e.code === 'KeyR') this.onRestart?.()
     })
   }
 
   private fire(): void {
-    if (!this.fired) {
-      this.fired = true
-      this.onFirstInput?.()
-    }
+    if (!this.fired) { this.fired = true; this.onFirstInput?.() }
   }
+  jump(): void { this.fire(); this.onJump?.() }
+  boost(): void { this.fire(); this.onBoost?.() }
 
   isHeld(): boolean {
     return this.forced ?? this.held
   }
-
   force(v: boolean | null): void {
     this.forced = v
   }

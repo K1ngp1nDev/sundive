@@ -1,36 +1,44 @@
 import { Application, Container, Graphics, Sprite, Texture } from 'pixi.js'
 import type { Terrain } from '../core/terrain'
+import type { Course } from '../core/course'
 import { getState } from '../core/state'
 import { radialGlow, skyTexture } from './textures'
 
-// The whole look: sunset canyon, gold ridge light, and the comet trail as the
-// hero element. World container is y-flipped (world y-up -> screen y-down).
+// Sunset canyon race renderer: parallax sky/dunes, gold ridge terrain, N
+// colour-coded comets with trails (player is the gold hero), ground hazards,
+// airborne boost motes, and boost/stun juice.
 
 const PX_PER_M = 8
 
-interface Particle {
-  sp: Sprite
-  vx: number
-  vy: number
-  life: number
-  max: number
-  drag: number
-  grav: number
-}
+interface Particle { sp: Sprite; vx: number; vy: number; life: number; max: number; drag: number; grav: number }
+interface Ring { g: Graphics; x: number; y: number; max: number; color: number; life: number }
 
-interface Ring {
-  g: Graphics
+export interface RacerRender {
   x: number
   y: number
-  r: number
-  max: number
+  speed: number
+  holding: boolean
+  grounded: boolean
+  boosting: boolean
+  stunned: boolean
+  isPlayer: boolean
   color: number
-  life: number
+}
+
+interface RacerView {
+  glow: Sprite
+  core: Graphics
+  trailG: Graphics
+  ring: Graphics // stun/boost ring
+  trail: number[]
+  color: number
+  isPlayer: boolean
 }
 
 export class Renderer {
   readonly app: Application
   private terrain!: Terrain
+  private course: Course | null = null
 
   private world = new Container()
   private shaker = new Container()
@@ -41,32 +49,29 @@ export class Renderer {
   private terrainChunks = new Map<number, Graphics>()
   private terrainLayer = new Container()
   private markerLayer = new Container()
+  private obstacleLayer = new Container()
+  private bonusLayer = new Container()
+  private racerLayer = new Container()
   private fxLayer = new Container()
+  private shadow = new Graphics()
 
-  private trailG = new Graphics()
-  private ghostTrailG = new Graphics()
-  private cometGlow!: Sprite
-  private cometCore!: Graphics
-  private ghostGlow!: Sprite
-  private ghostCore!: Graphics
+  private bonusSprites: { sp: Sprite; core: Graphics }[] = []
+  private views: RacerView[] = []
 
   private particles: Particle[] = []
   private rings: Ring[] = []
   private glowTexWarm!: Texture
   private glowTexGold!: Texture
-  private glowTexGhost!: Texture
 
-  private speedLines: Graphics = new Graphics()
-  private flash: Graphics = new Graphics()
+  private speedLines = new Graphics()
+  private flash = new Graphics()
 
-  private trail: number[] = [] // x,y triplets? x,y,speed
-  private ghostTrail: number[] = []
   private camX = 0
   private camY = 0
   private zoom = 1
-  private trauma = 0
   private zoomPop = 0
-  private shadow = new Graphics()
+  private trauma = 0
+  private t = 0
 
   constructor(app: Application) {
     this.app = app
@@ -79,6 +84,14 @@ export class Renderer {
     this.terrainChunks.clear()
     this.terrainLayer.removeChildren()
     this.markerLayer.removeChildren()
+    this.obstacleLayer.removeChildren()
+    this.bonusLayer.removeChildren()
+    this.racerLayer.removeChildren()
+    this.fxLayer.removeChildren()
+    this.views = []
+    this.bonusSprites = []
+    this.particles = []
+    this.rings = []
 
     const w = this.app.screen.width
     const h = this.app.screen.height
@@ -88,10 +101,8 @@ export class Renderer {
     this.sky.height = h
     stage.addChild(this.sky)
 
-    // sun low over the horizon
     this.glowTexGold = radialGlow('#ffd27a')
     this.glowTexWarm = radialGlow('#ff8a5c')
-    this.glowTexGhost = radialGlow('#9fd8e8')
     this.sun = new Sprite(radialGlow('#ffe9b8', 256))
     this.sun.anchor.set(0.5)
     this.sun.blendMode = 'add'
@@ -99,13 +110,9 @@ export class Renderer {
     this.sunCore = new Graphics().circle(0, 0, 46).fill({ color: 0xfff3d0 })
     stage.addChild(this.sunCore)
 
-    // parallax dune silhouettes (screen-space, offset by camera)
-    for (const [factor, color, alpha, base] of [
-      [0.06, 0x2b2454, 0.9, 0.62],
-      [0.14, 0x241c49, 0.95, 0.72],
-    ] as const) {
+    for (const [i, factor] of [0.06, 0.14].entries()) {
       const g = new Graphics()
-      this.drawDunes(g, w, h, factor, color, alpha, base)
+      this.drawDunes(g, w, h, factor, i === 0 ? 0x2b2454 : 0x241c49, i === 0 ? 0.9 : 0.95, i === 0 ? 0.62 : 0.72)
       stage.addChild(g)
       this.parallax.push({ g, factor })
     }
@@ -114,38 +121,83 @@ export class Renderer {
     this.shaker.addChild(this.world)
     this.world.addChild(this.terrainLayer)
     this.world.addChild(this.markerLayer)
-
-    // ghost under player
-    this.ghostGlow = new Sprite(this.glowTexGhost)
-    this.ghostGlow.anchor.set(0.5)
-    this.ghostGlow.blendMode = 'add'
-    this.ghostGlow.alpha = 0.5
-    this.ghostCore = new Graphics().circle(0, 0, 2.2).fill({ color: 0xcdeef7 })
-    this.world.addChild(this.ghostTrailG)
-    this.world.addChild(this.ghostGlow)
-    this.world.addChild(this.ghostCore)
-
-    this.cometGlow = new Sprite(this.glowTexGold)
-    this.cometGlow.anchor.set(0.5)
-    this.cometGlow.blendMode = 'add'
-    this.world.addChild(this.shadow) // altitude cue: ground shadow while airborne
-    this.world.addChild(this.trailG)
+    this.world.addChild(this.obstacleLayer)
+    this.world.addChild(this.shadow)
+    this.world.addChild(this.bonusLayer)
+    this.world.addChild(this.racerLayer)
     this.world.addChild(this.fxLayer)
-    this.world.addChild(this.cometGlow)
-    this.cometCore = new Graphics().circle(0, 0, 3.1).fill({ color: 0xffffff })
-    this.world.addChild(this.cometCore)
 
-    // finish + checkpoint pillars
     this.drawMarkers()
 
-    // screen-space fx
     stage.addChild(this.speedLines)
     stage.addChild(this.flash)
+  }
 
-    this.trail.length = 0
-    this.ghostTrail.length = 0
-    this.particles = []
-    this.rings = []
+  setCourse(course: Course): void {
+    this.course = course
+    this.obstacleLayer.removeChildren()
+    this.bonusLayer.removeChildren()
+    this.bonusSprites = []
+
+    // hazards — dark vents with a hot rim, planted on the ground
+    for (const o of course.obstacles) {
+      const g = new Graphics()
+      g.moveTo(o.x - 2.2, o.y)
+      g.lineTo(o.x, o.y + 3.4)
+      g.lineTo(o.x + 2.2, o.y)
+      g.closePath()
+      g.fill({ color: 0x2a1420 })
+      g.moveTo(o.x - 2.2, o.y)
+      g.lineTo(o.x, o.y + 3.4)
+      g.lineTo(o.x + 2.2, o.y)
+      g.stroke({ width: 0.7, color: 0xff5a48, alpha: 0.95 })
+      const glow = new Sprite(this.glowTexWarm)
+      glow.anchor.set(0.5)
+      glow.blendMode = 'add'
+      glow.width = glow.height = 7
+      glow.position.set(o.x, o.y + 2)
+      glow.alpha = 0.5
+      this.obstacleLayer.addChild(g)
+      this.obstacleLayer.addChild(glow)
+    }
+
+    // boost motes — floating gold orbs
+    for (const b of course.bonuses) {
+      const sp = new Sprite(this.glowTexGold)
+      sp.anchor.set(0.5)
+      sp.blendMode = 'add'
+      sp.width = sp.height = 9
+      sp.position.set(b.x, b.y)
+      const core = new Graphics().circle(0, 0, 1.4).fill({ color: 0xfff6ea })
+      core.position.set(b.x, b.y)
+      this.bonusLayer.addChild(sp)
+      this.bonusLayer.addChild(core)
+      this.bonusSprites.push({ sp, core })
+    }
+  }
+
+  setRacers(defs: { color: number; isPlayer: boolean }[]): void {
+    this.racerLayer.removeChildren()
+    this.views = []
+    // opponents first (below), player last (on top)
+    const ordered = [...defs].sort((a, b) => Number(a.isPlayer) - Number(b.isPlayer))
+    for (const d of ordered) {
+      const trailG = new Graphics()
+      const glow = new Sprite(radialGlow(hex(d.color)))
+      glow.anchor.set(0.5)
+      glow.blendMode = 'add'
+      const core = new Graphics().circle(0, 0, d.isPlayer ? 3.1 : 2.4).fill({ color: 0xffffff })
+      const ring = new Graphics()
+      this.racerLayer.addChild(trailG)
+      this.racerLayer.addChild(ring)
+      this.racerLayer.addChild(glow)
+      this.racerLayer.addChild(core)
+      this.views.push({ glow, core, trailG, ring, trail: [], color: d.color, isPlayer: d.isPlayer })
+    }
+  }
+
+  private viewFor(isPlayer: boolean, color: number): RacerView | undefined {
+    return this.views.find((v) => v.isPlayer === isPlayer && v.color === color) ?? this.views.find((v) => v.color === color)
   }
 
   private drawDunes(g: Graphics, w: number, h: number, factor: number, color: number, alpha: number, base: number): void {
@@ -168,7 +220,6 @@ export class Renderer {
     const mk = (x: number, color: number, alpha: number, width: number, height: number) => {
       const h0 = t.heightAt(x)
       const g = new Graphics()
-      // tapered light pillar: bright at the ground, fading upward
       const steps = 6
       for (let i = 0; i < steps; i++) {
         const k = i / steps
@@ -178,12 +229,11 @@ export class Renderer {
       g.blendMode = 'add'
       this.markerLayer.addChild(g)
     }
-    for (const c of t.checkpoints) mk(c, 0xffd27a, 0.16, 2.2, 34)
-    mk(t.length, 0xffd27a, 0.3, 5, 60)
+    for (const c of t.checkpoints) mk(c, 0xffd27a, 0.14, 2.2, 30)
+    mk(t.length, 0xffd27a, 0.32, 5, 64)
     mk(0, 0x9fd8e8, 0.18, 2.2, 34)
   }
 
-  /** Terrain drawn in 160 m chunks, filled to a deep-blue base. */
   private ensureChunks(centerX: number, viewW: number): void {
     const CHUNK = 160
     const from = Math.floor((centerX - viewW) / CHUNK) - 1
@@ -194,27 +244,21 @@ export class Renderer {
       const x0 = ci * CHUNK
       const bottom = this.terrain.minH - 90
       const step = 2
-      // fill body
       g.moveTo(x0, bottom)
       for (let x = x0; x <= x0 + CHUNK + step; x += step) g.lineTo(x, this.terrain.heightAt(x))
       g.lineTo(x0 + CHUNK + step, bottom)
       g.closePath()
       g.fill({ color: 0x1d1738 })
-      // depth shade overlay (second darker fill lower down)
       g.moveTo(x0, bottom)
       for (let x = x0; x <= x0 + CHUNK + step; x += step) g.lineTo(x, this.terrain.heightAt(x) - 14)
       g.lineTo(x0 + CHUNK + step, bottom)
       g.closePath()
       g.fill({ color: 0x120f2c, alpha: 0.85 })
-      // gold ridge rim + soft coral under-glow
       const rim = (dy: number, width: number, color: number, alpha: number) => {
         let first = true
         for (let x = x0; x <= x0 + CHUNK + step; x += step) {
           const y = this.terrain.heightAt(x) + dy
-          if (first) {
-            g.moveTo(x, y)
-            first = false
-          } else g.lineTo(x, y)
+          if (first) { g.moveTo(x, y); first = false } else g.lineTo(x, y)
         }
         g.stroke({ width, color, alpha, cap: 'round', join: 'round' })
       }
@@ -223,12 +267,8 @@ export class Renderer {
       this.terrainLayer.addChild(g)
       this.terrainChunks.set(ci, g)
     }
-    // drop far chunks
     for (const [ci, g] of this.terrainChunks) {
-      if (ci < from - 4 || ci > to + 4) {
-        g.destroy()
-        this.terrainChunks.delete(ci)
-      }
+      if (ci < from - 4 || ci > to + 4) { g.destroy(); this.terrainChunks.delete(ci) }
     }
   }
 
@@ -236,13 +276,10 @@ export class Renderer {
     if (getState().reducedMotion) return
     this.trauma = Math.min(1, this.trauma + n)
   }
-
-  /** Brief zoom-in pulse (launch feel). */
   pop(): void {
     if (getState().reducedMotion) return
     this.zoomPop = 1
   }
-
   flashScreen(color: number, alpha: number): void {
     const w = this.app.screen.width
     const h = this.app.screen.height
@@ -250,20 +287,21 @@ export class Renderer {
     this.flash.rect(0, 0, w, h).fill({ color, alpha })
   }
 
-  burst(x: number, y: number, kind: 'land' | 'perfect' | 'slam' | 'dive', count = 10): void {
+  burst(x: number, y: number, kind: 'land' | 'perfect' | 'slam' | 'dive' | 'boost' | 'bonus' | 'stun', count = 10, color = 0xffd27a): void {
     const reduced = getState().reducedMotion
     const n = reduced ? Math.ceil(count / 2) : count
-    const tex = kind === 'slam' ? this.glowTexWarm : this.glowTexGold
+    const tex = kind === 'slam' || kind === 'boost' ? this.glowTexWarm : this.glowTexGold
     for (let i = 0; i < n; i++) {
       const sp = new Sprite(tex)
       sp.anchor.set(0.5)
       sp.blendMode = 'add'
+      sp.tint = color
       const size = kind === 'dive' ? 1.4 : 2.6
       sp.width = size + Math.random() * size
       sp.height = sp.width
       sp.position.set(x, y)
       const a = Math.random() * Math.PI
-      const pow = kind === 'slam' ? 26 : kind === 'perfect' ? 18 : 10
+      const pow = kind === 'slam' || kind === 'boost' ? 26 : kind === 'perfect' ? 18 : 10
       this.fxLayer.addChild(sp)
       this.particles.push({
         sp,
@@ -272,55 +310,40 @@ export class Renderer {
         life: 0,
         max: 0.5 + Math.random() * 0.45,
         drag: 2.2,
-        grav: kind === 'dive' ? 8 : 26,
+        grav: kind === 'dive' || kind === 'boost' ? 6 : 26,
       })
     }
-    if (kind === 'perfect' || kind === 'slam') {
+    if (kind === 'perfect' || kind === 'slam' || kind === 'bonus' || kind === 'stun') {
       const g = new Graphics()
       g.blendMode = 'add'
       this.fxLayer.addChild(g)
-      this.rings.push({ g, x, y, r: 2, max: kind === 'perfect' ? 26 : 18, color: kind === 'perfect' ? 0xffd27a : 0xff8a5c, life: 0 })
+      this.rings.push({ g, x, y, max: kind === 'perfect' ? 26 : kind === 'stun' ? 20 : 16, color, life: 0 })
     }
   }
 
-  /** Called every rAF with interpolated player/ghost world positions. */
-  render(
-    px: number,
-    py: number,
-    speed: number,
-    holding: boolean,
-    grounded: boolean,
-    ghost: { x: number; y: number } | null,
-    dt: number,
-  ): void {
+  render(states: RacerRender[], dt: number): void {
+    this.t += dt
     const w = this.app.screen.width
     const h = this.app.screen.height
-
-    // resizeTo can apply after init — keep the backdrop in sync with the canvas
     if (Math.abs(this.sky.width - w) > 1 || Math.abs(this.sky.height - h) > 1) this.resize()
 
-    // camera: comet sits ~34% from the left; zoom out with speed, but keep the
-    // hills large enough that dives and arcs stay physically readable
-    const targetZoom = (1.12 - Math.min(0.34, Math.max(0, (speed - 14) / 130))) * (this.zoomPop > 0 ? 1 + this.zoomPop * 0.06 : 1)
+    const player = states.find((s) => s.isPlayer) ?? states[0]
+
+    // camera on the player
+    const targetZoom = (1.12 - Math.min(0.34, Math.max(0, (player.speed - 14) / 130))) * (this.zoomPop > 0 ? 1 + this.zoomPop * 0.06 : 1)
     this.zoomPop = Math.max(0, this.zoomPop - dt * 3)
     this.zoom += (targetZoom - this.zoom) * Math.min(1, dt * 3.2)
     const scale = PX_PER_M * this.zoom * Math.min(1, w / 900 + 0.35)
-
-    const lookAhead = Math.min(48, speed * 0.45)
-    const tx = px + lookAhead
-    const ty = py + 8
-    this.camX += (tx - this.camX) * Math.min(1, dt * 5)
-    this.camY += (ty - this.camY) * Math.min(1, dt * 4)
-
+    const lookAhead = Math.min(48, player.speed * 0.45)
+    this.camX += (player.x + lookAhead - this.camX) * Math.min(1, dt * 5)
+    this.camY += (player.y + 8 - this.camY) * Math.min(1, dt * 4)
     this.world.scale.set(scale, -scale)
     this.world.position.set(w * 0.34 - this.camX * scale, h * 0.52 + this.camY * scale)
 
-    // shake
     this.trauma = Math.max(0, this.trauma - dt * 1.7)
     const s2 = this.trauma * this.trauma
     this.shaker.position.set((Math.random() * 2 - 1) * s2 * 16, (Math.random() * 2 - 1) * s2 * 16)
 
-    // sun + parallax follow camera softly
     this.sun.position.set(w * 0.72 - this.camX * 0.02, h * 0.34 + this.camY * 0.04)
     this.sun.width = this.sun.height = Math.max(w, h) * 0.5
     this.sunCore.position.copyFrom(this.sun.position)
@@ -331,58 +354,68 @@ export class Renderer {
 
     this.ensureChunks(this.camX, w / scale)
 
-    // player comet + trail
-    this.cometGlow.position.set(px, py)
-    const glowSize = (3.2 + speed * 0.06) * (holding ? 1.25 : 1)
-    this.cometGlow.width = this.cometGlow.height = glowSize * 2
-    this.cometCore.position.set(px, py)
-
-    // altitude shadow: the classic "how high am I" cue
-    this.shadow.clear()
-    if (!grounded) {
-      const gy = this.terrain.heightAt(px)
-      const alt = Math.max(0, py - gy)
-      if (alt > 1.2) {
-        const k = Math.min(1, alt / 30)
-        this.shadow
-          .ellipse(px, gy + 0.25, 2.6 + k * 2.2, 0.7 + k * 0.4)
-          .fill({ color: 0x0a0820, alpha: 0.4 * (1 - k * 0.5) })
+    // bonus pulse + taken visibility
+    if (this.course) {
+      for (let i = 0; i < this.bonusSprites.length; i++) {
+        const b = this.course.bonuses[i]
+        const v = this.bonusSprites[i]
+        const on = !b.taken
+        v.sp.visible = v.core.visible = on
+        if (on && !getState().reducedMotion) {
+          const p = 1 + Math.sin(this.t * 4 + i) * 0.18
+          v.sp.width = v.sp.height = 9 * p
+        }
       }
     }
 
-    this.trail.push(px, py, speed)
-    const maxPts = 110
-    if (this.trail.length > maxPts * 3) this.trail.splice(0, this.trail.length - maxPts * 3)
-    this.drawTrail(this.trailG, this.trail, speed, true)
+    // racers
+    this.shadow.clear()
+    for (const st of states) {
+      const v = this.viewFor(st.isPlayer, st.color)
+      if (!v) continue
+      v.glow.position.set(st.x, st.y)
+      const base = st.isPlayer ? 3.2 : 2.4
+      const glowSize = (base + st.speed * 0.06) * (st.boosting ? 1.6 : st.holding ? 1.2 : 1)
+      v.glow.width = v.glow.height = glowSize * 2
+      v.glow.alpha = st.stunned ? 0.4 : 1
+      v.core.position.set(st.x, st.y)
+      v.core.alpha = st.stunned ? 0.5 : 1
 
-    // dive sparks
-    if (holding && grounded && speed > 24 && !getState().reducedMotion && Math.random() < 0.45) {
-      this.burst(px, py + 0.4, 'dive', 1)
+      // stun / boost ring
+      v.ring.clear()
+      if (st.stunned) {
+        v.ring.circle(st.x, st.y + 0.2, 3 + Math.sin(this.t * 12) * 0.4).stroke({ width: 0.5, color: 0xff5a48, alpha: 0.8 })
+      } else if (st.boosting) {
+        v.ring.circle(st.x, st.y, 4).stroke({ width: 0.6, color: st.color, alpha: 0.6 })
+      }
+
+      // trail
+      v.trail.push(st.x, st.y, st.speed)
+      const maxPts = st.isPlayer ? 120 : 60
+      if (v.trail.length > maxPts * 3) v.trail.splice(0, v.trail.length - maxPts * 3)
+      this.drawTrail(v.trailG, v.trail, st.speed, st.isPlayer, st.color, st.boosting)
+
+      // player: ground shadow altitude cue + dive/boost sparks
+      if (st.isPlayer) {
+        if (!st.grounded) {
+          const gy = this.terrain.heightAt(st.x)
+          const alt = Math.max(0, st.y - gy)
+          if (alt > 1.2) {
+            const k = Math.min(1, alt / 30)
+            this.shadow.ellipse(st.x, gy + 0.25, 2.6 + k * 2.2, 0.7 + k * 0.4).fill({ color: 0x0a0820, alpha: 0.4 * (1 - k * 0.5) })
+          }
+        }
+        if (st.boosting && !getState().reducedMotion && Math.random() < 0.7) this.burst(st.x, st.y, 'boost', 1, st.color)
+        else if (st.holding && st.grounded && st.speed > 24 && !getState().reducedMotion && Math.random() < 0.4) this.burst(st.x, st.y + 0.4, 'dive', 1)
+      }
     }
 
-    // ghost
-    if (ghost) {
-      this.ghostGlow.visible = this.ghostCore.visible = true
-      this.ghostGlow.position.set(ghost.x, ghost.y)
-      this.ghostGlow.width = this.ghostGlow.height = 7
-      this.ghostCore.position.set(ghost.x, ghost.y)
-      this.ghostTrail.push(ghost.x, ghost.y, 30)
-      if (this.ghostTrail.length > 70 * 3) this.ghostTrail.splice(0, this.ghostTrail.length - 70 * 3)
-      this.drawTrail(this.ghostTrailG, this.ghostTrail, 30, false)
-    } else {
-      this.ghostGlow.visible = this.ghostCore.visible = false
-    }
-
-    // particles
+    // particles + rings
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i]
       p.life += dt
       const k = p.life / p.max
-      if (k >= 1) {
-        p.sp.destroy()
-        this.particles.splice(i, 1)
-        continue
-      }
+      if (k >= 1) { p.sp.destroy(); this.particles.splice(i, 1); continue }
       p.vx -= p.vx * p.drag * dt
       p.vy -= p.grav * dt
       p.sp.position.x += p.vx * dt
@@ -393,103 +426,79 @@ export class Renderer {
       const r = this.rings[i]
       r.life += dt
       const k = r.life / 0.5
-      if (k >= 1) {
-        r.g.destroy()
-        this.rings.splice(i, 1)
-        continue
-      }
+      if (k >= 1) { r.g.destroy(); this.rings.splice(i, 1); continue }
       r.g.clear()
       r.g.circle(r.x, r.y, 2 + r.max * k).stroke({ width: 1.6 * (1 - k) + 0.4, color: r.color, alpha: 0.9 * (1 - k) })
     }
 
-    // speed lines (screen space)
+    // speed lines (stronger during boost)
     this.speedLines.clear()
-    const slk = Math.max(0, (speed - 46) / 55)
+    const slk = Math.max(0, (player.speed - 46) / 55) + (player.boosting ? 0.6 : 0)
     if (slk > 0 && !getState().reducedMotion) {
-      for (let i = 0; i < 10; i++) {
+      for (let i = 0; i < 12; i++) {
         const y = ((i * 977) % h) + ((performance.now() * 0.05 * (1 + i * 0.13)) % 40)
-        const len = 40 + slk * 130 + i * 7
+        const len = 40 + slk * 150 + i * 7
         const x = w - (((performance.now() * (0.6 + slk) * (0.5 + i * 0.09)) + i * 331) % (w + len))
-        this.speedLines.rect(x, y % h, len, 1.2).fill({ color: 0xfff6ea, alpha: 0.14 * slk })
+        this.speedLines.rect(x, y % h, len, 1.2).fill({ color: player.boosting ? 0xffe9b8 : 0xfff6ea, alpha: 0.14 * slk })
       }
     }
 
-    // flash decay
     if (this.flash.alpha > 0.01) this.flash.alpha *= Math.max(0, 1 - dt * 7)
-    else this.flash.clear(), (this.flash.alpha = 1)
+    else { this.flash.clear(); this.flash.alpha = 1 }
   }
 
-  private drawTrail(g: Graphics, pts: number[], speed: number, warm: boolean): void {
+  private drawTrail(g: Graphics, pts: number[], speed: number, hero: boolean, color: number, boosting: boolean): void {
     g.clear()
     const n = pts.length / 3
     if (n < 2) return
     g.blendMode = 'add'
-    const baseW = warm ? Math.min(3.4, 1 + speed * 0.03) : 0.9
-
-    // soft underlayer: one continuous path per contiguous span (no braiding)
-    if (warm) {
+    const baseW = hero ? Math.min(3.6, 1 + speed * 0.03) * (boosting ? 1.5 : 1) : 0.8
+    if (hero) {
       let open = false
       for (let i = 0; i < n; i++) {
         const x = pts[i * 3]
         const y = pts[i * 3 + 1]
         if (i > 0 && Math.abs(x - pts[(i - 1) * 3]) > 30) {
-          if (open) g.stroke({ width: baseW * 2.8, color: 0xff8a5c, alpha: 0.12, cap: 'round', join: 'round' })
+          if (open) g.stroke({ width: baseW * 2.8, color: boosting ? 0xffe9b8 : 0xff8a5c, alpha: 0.12, cap: 'round', join: 'round' })
           open = false
         }
-        if (!open) {
-          g.moveTo(x, y)
-          open = true
-        } else g.lineTo(x, y)
+        if (!open) { g.moveTo(x, y); open = true } else g.lineTo(x, y)
       }
-      if (open) g.stroke({ width: baseW * 2.8, color: 0xff8a5c, alpha: 0.12, cap: 'round', join: 'round' })
+      if (open) g.stroke({ width: baseW * 2.8, color: boosting ? 0xffe9b8 : 0xff8a5c, alpha: 0.12, cap: 'round', join: 'round' })
     }
-
-    // bright core, segment-faded toward the head
     for (let i = 1; i < n; i++) {
-      const k = i / n // 0 old -> 1 new
+      const k = i / n
       const x0 = pts[(i - 1) * 3]
       const y0 = pts[(i - 1) * 3 + 1]
       const x1 = pts[i * 3]
       const y1 = pts[i * 3 + 1]
-      if (Math.abs(x1 - x0) > 30) continue // restart gap
+      if (Math.abs(x1 - x0) > 30) continue
       const wgt = baseW * (0.15 + 0.85 * k)
-      if (warm) {
-        g.moveTo(x0, y0)
-        g.lineTo(x1, y1)
-        g.stroke({ width: wgt, color: k > 0.85 ? 0xfff6ea : 0xffd27a, alpha: 0.65 * k, cap: 'round' })
-      } else {
-        g.moveTo(x0, y0)
-        g.lineTo(x1, y1)
-        g.stroke({ width: wgt, color: 0x9fd8e8, alpha: 0.3 * k, cap: 'round' })
-      }
+      g.moveTo(x0, y0)
+      g.lineTo(x1, y1)
+      if (hero) g.stroke({ width: wgt, color: k > 0.85 ? 0xfff6ea : color, alpha: 0.65 * k, cap: 'round' })
+      else g.stroke({ width: wgt, color, alpha: 0.28 * k, cap: 'round' })
     }
   }
 
-  /** World -> screen (CSS px) using the current camera transform. */
   project(x: number, y: number): { x: number; y: number } {
-    return {
-      x: this.world.position.x + x * this.world.scale.x,
-      y: this.world.position.y + y * this.world.scale.y,
-    }
+    return { x: this.world.position.x + x * this.world.scale.x, y: this.world.position.y + y * this.world.scale.y }
   }
 
   clearTrails(): void {
-    this.trail.length = 0
-    this.ghostTrail.length = 0
-    this.trailG.clear()
-    this.ghostTrailG.clear()
+    for (const v of this.views) { v.trail.length = 0; v.trailG.clear(); v.ring.clear() }
   }
 
   resize(): void {
     const w = this.app.screen.width
     const h = this.app.screen.height
-    if (this.sky) {
-      this.sky.texture = skyTexture(w, h)
-      this.sky.width = w
-      this.sky.height = h
-    }
+    if (this.sky) { this.sky.texture = skyTexture(w, h); this.sky.width = w; this.sky.height = h }
     for (const [i, p] of this.parallax.entries()) {
       this.drawDunes(p.g, w, h, p.factor, i === 0 ? 0x2b2454 : 0x241c49, 0.9, i === 0 ? 0.62 : 0.72)
     }
   }
+}
+
+function hex(c: number): string {
+  return '#' + c.toString(16).padStart(6, '0')
 }

@@ -152,6 +152,58 @@ export function playCheckpoint(ahead: boolean): void {
   pluck(ahead ? 880 : 392, 0.09, 0.16, 'sine')
 }
 
+export function playJump(): void {
+  pluck(300, 0.1, 0.12, 'sine')
+  setTimeout(() => pluck(500, 0.08, 0.12, 'sine'), 40)
+}
+
+export function playBoost(): void {
+  try {
+    if (!ensure() || !ctx) return
+    const t = ctx.currentTime
+    const o = ctx.createOscillator()
+    o.type = 'sawtooth'
+    o.frequency.setValueAtTime(180, t)
+    o.frequency.exponentialRampToValueAtTime(700, t + 0.35)
+    const g = env(t, 0.16, 0.4)
+    const bp = ctx.createBiquadFilter()
+    bp.type = 'bandpass'
+    bp.frequency.value = 800
+    if (g) { o.connect(bp); bp.connect(g); o.start(t); o.stop(t + 0.45) }
+  } catch {
+    /* no-op */
+  }
+}
+
+export function playBonus(): void {
+  pluck(784, 0.12, 0.18, 'sine')
+  setTimeout(() => pluck(1175, 0.1, 0.22, 'sine'), 55)
+}
+
+export function playObstacle(): void {
+  try {
+    if (!ensure() || !ctx) return
+    const t = ctx.currentTime
+    const len = Math.floor(ctx.sampleRate * 0.2)
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate)
+    const d = buf.getChannelData(0)
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len)
+    const src = ctx.createBufferSource()
+    src.buffer = buf
+    const lp = ctx.createBiquadFilter()
+    lp.type = 'lowpass'
+    lp.frequency.value = 500
+    const g = env(t, 0.2, 0.2)
+    if (g) { src.connect(lp); lp.connect(g); src.start(t) }
+  } catch {
+    /* no-op */
+  }
+}
+
+export function playStunHit(): void {
+  pluck(220, 0.16, 0.28, 'square')
+}
+
 export function playFinish(newBest: boolean): void {
   const notes = newBest ? [523, 659, 784, 1047] : [523, 659, 784]
   notes.forEach((f, i) => setTimeout(() => pluck(f, 0.14, 0.5, 'sine'), i * 110))

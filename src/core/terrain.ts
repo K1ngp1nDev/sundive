@@ -6,8 +6,13 @@ import { hashStr, mulberry32 } from './rng'
 // bit-identical for a given seed.
 
 export const INTRO_X = -160 // comet spawns here, rolling start
-export const RUN_LENGTH = 2100 // start line (x=0) to finish line
+export const RUN_LENGTH = 2100 // default start line (x=0) to finish line
 export const RUNOUT = 420 // flat braking zone after the finish
+
+export interface TerrainOpts {
+  length?: number // finish distance
+  ampScale?: number // valley depth multiplier (difficulty)
+}
 
 export interface Terrain {
   seed: string
@@ -20,7 +25,9 @@ export interface Terrain {
   maxH: number
 }
 
-export function buildTerrain(seedStr: string): Terrain {
+export function buildTerrain(seedStr: string, opts: TerrainOpts = {}): Terrain {
+  const RUN = opts.length ?? RUN_LENGTH
+  const ampScale = opts.ampScale ?? 1
   const rnd = mulberry32(hashStr(`terrain:${seedStr}`))
 
   // control points (x, h), starting high on the intro ramp
@@ -32,9 +39,9 @@ export function buildTerrain(seedStr: string): Terrain {
 
   let x = -14
   let crest = h
-  while (x < RUN_LENGTH + RUNOUT) {
-    const progress = Math.min(1, Math.max(0, x / RUN_LENGTH))
-    const amp = (14 + rnd() * 11) * (1 + progress * 0.8) // deep, readable valleys
+  while (x < RUN + RUNOUT) {
+    const progress = Math.min(1, Math.max(0, x / RUN))
+    const amp = (14 + rnd() * 11) * (1 + progress * 0.8) * ampScale // deep, readable valleys
     const downDx = 36 + rnd() * 42 // dive slope
     const upDx = 46 + rnd() * 52 // launch ramp
     const netDrop = 7 + rnd() * 12 // canyon keeps descending
@@ -46,7 +53,7 @@ export function buildTerrain(seedStr: string): Terrain {
     x += upDx
     pts.push([x, crest])
 
-    if (x > RUN_LENGTH) {
+    if (x > RUN) {
       // runout: gentle rise then flat to bleed speed
       pts.push([x + 90, crest + 14])
       pts.push([x + 240, crest + 20])
@@ -88,9 +95,9 @@ export function buildTerrain(seedStr: string): Terrain {
 
   return {
     seed: seedStr,
-    length: RUN_LENGTH,
+    length: RUN,
     totalLength: x1,
-    checkpoints: [RUN_LENGTH * 0.25, RUN_LENGTH * 0.5, RUN_LENGTH * 0.75],
+    checkpoints: [RUN * 0.25, RUN * 0.5, RUN * 0.75],
     heightAt,
     slopeAt,
     minH,

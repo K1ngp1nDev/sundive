@@ -1,22 +1,25 @@
 // Tiny observable store.
 
 export type Phase = 'attract' | 'running' | 'finished'
-export type Mode = 'daily' | 'free'
 
 export interface AppState {
   phase: Phase
-  mode: Mode
+  daily: boolean
   seed: string
-  timeMs: number // current run time (from start line)
-  speed: number // m/s
-  deltaMs: number | null // vs ghost at latest checkpoint (negative = ahead)
-  ghostSource: 'synthetic' | 'pb' | 'none'
+  level: number // 1-based
+  levelName: string
+  racerCount: number
+  timeMs: number
+  speed: number
+  boost: number // 0..1 nitro meter
+  boostReady: boolean
+  place: number | null // live/finish rank, 1 = leading
+  gapMs: number | null // gap to the rival directly ahead/behind
   pbMs: number | null
   lastMs: number | null
   newBest: boolean
+  won: boolean
   holding: boolean
-  progress: number // 0..1 along the course
-  ghostProgress: number
   muted: boolean
   reducedMotion: boolean
   ready: boolean
@@ -26,18 +29,22 @@ type Listener = (s: AppState) => void
 
 const state: AppState = {
   phase: 'attract',
-  mode: 'daily',
+  daily: true,
   seed: '',
+  level: 1,
+  levelName: '',
+  racerCount: 2,
   timeMs: 0,
   speed: 0,
-  deltaMs: null,
-  ghostSource: 'none',
+  boost: 1,
+  boostReady: true,
+  place: null,
+  gapMs: null,
   pbMs: null,
   lastMs: null,
   newBest: false,
+  won: false,
   holding: false,
-  progress: 0,
-  ghostProgress: 0,
   muted: false,
   reducedMotion: false,
   ready: false,
@@ -73,10 +80,8 @@ export function fmtTime(ms: number): string {
   return `${m}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}`
 }
 
-export function fmtDelta(ms: number): string {
-  const sign = ms <= 0 ? '−' : '+'
-  const t = Math.abs(Math.round(ms))
-  const s = Math.floor(t / 1000)
-  const cs = Math.floor((t % 1000) / 10)
-  return `${sign}${s}.${String(cs).padStart(2, '0')}`
+export function ordinal(n: number): string {
+  const s = ['th', 'st', 'nd', 'rd']
+  const v = n % 100
+  return n + (s[(v - 20) % 10] || s[v] || s[0])
 }

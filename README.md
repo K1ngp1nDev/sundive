@@ -1,86 +1,95 @@
-# SUNDIVE — hold to dive, release to soar
+# SUNDIVE — one-button comet racing
 
 **Live demo:** https://sundive.k1ngp1n.com
 
-One-button comet racing. A comet is already falling down a canyon of light when
-the page loads — **hold** (anywhere: mouse, touch, Space) to dive and build
-speed, **release** at a crest to launch. Momentum compounds: chain clean dives
-and each carve makes you faster; slam into an upslope and you bleed speed. A
-translucent ghost races beside you — first your rival, then your own personal
-best — and the finish line is always one more try away.
+Race a comet down a canyon of light against a field of rivals. **Hold** to dive
+and build speed, **release** at a crest to soar, **jump** to hop hazards and
+pounce on opponents, and **fire nitro** to blast past them. Five levels, each
+adding another rival and a steeper, hazard-strewn canyon. Instant restart,
+per-level daily seeds, best-time tracking.
 
-![Speed](docs/screenshots/sundive-speed.png)
-
-## The loop
-
-1. **Ride** — one input, everything else is physics. Dive the descents, release
-   just before the crest: a clean 14–35° takeoff is a **perfect launch** (+6%
-   speed, gold burst). A steep landing is a **slam** (speed loss, hitstop, shake).
-2. **Race the ghost** — the first run pits you against a synthetic "confident
-   novice" ghost simulated on today's canyon; beat it and every next run races
-   **your own PB ghost**, replayed from its recorded line. Live splits at every
-   checkpoint (`+0.42 / −0.15 vs best`).
-3. **Restart instantly** — R or the ↺ button. No menus between attempts.
-4. **Daily** — everyone in the world gets the same canyon (UTC-dated seed).
-   Free-run mode generates a fresh canyon per seed. Share copies a result line:
-   `SUNDIVE · Daily 2026-07-04 · 0:41.03 (−0:00.42 vs ghost)`.
-
-<table>
-  <tr>
-    <td><img src="docs/screenshots/sundive-start.png" alt="Start — the comet is already falling" /></td>
-    <td><img src="docs/screenshots/sundive-launch.png" alt="Launch off a crest, ghost alongside" /></td>
-  </tr>
-  <tr>
-    <td><img src="docs/screenshots/sundive-ghost-race.png" alt="Racing the PB ghost" /></td>
-    <td><img src="docs/screenshots/sundive-finish.png" alt="Finish screen" /></td>
-  </tr>
-</table>
+![Race](docs/screenshots/sundive-race.png)
 
 ## Controls
 
 | Input | Action |
 |---|---|
-| **Hold** mouse / touch / <kbd>Space</kbd> | dive — steepen, grip the slope, build speed |
-| **Release** | soar — launch off the crest, keep your momentum |
-| <kbd>R</kbd> / ↺ | instant restart |
-| <kbd>M</kbd> / ♪ | sound (procedural wind, plucks, thuds — no audio files) |
+| **Hold** mouse / touch | dive — grip the slope, build speed |
+| **release** | soar — launch off the crest with your momentum |
+| **Space** / JUMP | hop — clear a hazard, or land on a rival to stun it |
+| **Shift / Enter** / NITRO | fire nitro — a burst of speed (recharges ~5 s) |
+| **R** / ↺ | instant restart · **M** sound |
 
-## How the determinism works
+## The race
 
-- **Fixed-timestep physics** (120 Hz) — the whole sim is ~150 lines of
-  ballistic integration + project-and-slide collision. Dives, launches, carves
-  and slams all emerge from three rules and a tuning table.
-- **Seeded world** — terrain control points, and the synthetic ghost's
-  "human-like" reaction delays, all flow from `mulberry32(hash(seed))`. The
-  daily seed is the UTC date string, so the planet races the same canyon.
-- **Ghosts are position streams** (30 Hz samples, lerped on playback, aligned
-  at the start-line crossing) stored per-seed in `localStorage` as base64
-  Float32 — immune to any future physics retuning.
-- **Race time is tick-exact**: start/finish crossings are interpolated inside
-  the tick, so times are fair to ~1 ms.
+- **Rivals.** Each level fields more colour-coded comets (Jade, Rose, Violet…),
+  driven by live bots that dive, nitro and hop hazards. Your placement (`1st of 4`)
+  updates live; beat everyone to **win the level and unlock the next**.
+- **Nitro.** A meter fills over ~5 s (faster when you grab motes or stun rivals).
+  Fire it for a hard shove — the equalizer when a bot is carving a perfect line.
+- **Jump + stun-land.** Hop over the hot **hazard vents** (a hit staggers you and
+  bleeds speed). Come down *on top of* a rival and you **stun them for 2 s** (they
+  stop, then re-accelerate), bounce off, and refill nitro.
+- **Boost motes.** Golden orbs float above the canyon — catch one mid-launch to
+  top up your nitro.
+- **Perfect launches.** A committed dive released at a clean crest angle gives a
+  speed bonus and a gold burst.
 
-## Portfolio notes (why this project)
+## Levels
 
-It is a **game-feel** exercise: a single verb tuned until it feels sublime —
-momentum, gravity, camera zoom/lead, screenshake with self-correction, hitstop,
-slow-mo finish, procedural audio that pitches with speed. Plus deterministic
-simulation, replay/ghost engineering, and a daily-seed loop — all in a static
-bundle with zero backend.
+| # | Name | Rivals | Canyon |
+|---|---|---|---|
+| 1 | First Light | 1 | gentle, short — learn the verb |
+| 2 | Long Shadows | 2 | standard |
+| 3 | Deep Canyon | 3 | deeper valleys |
+| 4 | Solar Wind | 4 | steep, hazard-heavy |
+| 5 | Perihelion | 5 | brutal |
+
+Level 1's rival is deliberately beatable while you learn; higher levels have
+faster, sharper bots. Progress unlocks in `localStorage`.
+
+<table>
+  <tr>
+    <td><img src="docs/screenshots/sundive-start.png" alt="Start / level select" /></td>
+    <td><img src="docs/screenshots/sundive-boost.png" alt="Nitro boost" /></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/sundive-launch.png" alt="Launch off a crest" /></td>
+    <td><img src="docs/screenshots/sundive-finish.png" alt="Finish — you win" /></td>
+  </tr>
+</table>
+
+## Under the hood
+
+- **Deterministic fixed-timestep physics** (120 Hz): ballistic integration +
+  project-and-slide collision. Dive, carve, launch, slam, **jump**, **nitro** and
+  **stun** are all in one tuning table. A headless telemetry harness (bot runs
+  over many seeds) keeps runs in the ~40–60 s range with a compounding speed curve.
+- **Seeded everything** (`mulberry32`): terrain, rival skill, hazard and mote
+  placement flow from `seed:Ln`. Daily seed = the UTC date, so the world races
+  the same canyon; free-run rolls a fresh one.
+- **Live bot rivals** read the terrain exactly like you (dive lookahead + nitro on
+  long descents + hop over hazards) — no scripted paths.
+- **The look**: sunset solar canyon (gold / coral / deep blue), parallax dunes,
+  gold ridge light, additive comet trails (the player is the gold hero), ground
+  shadow for altitude, boost speed-lines, screenshake / hitstop / slow-mo finish,
+  fully procedural WebAudio (wind, nitro, jump, stun, bonus).
+- Static bundle, no backend, no assets. First-run coach + demo-input teach the
+  verb in the first seconds, then never nag again.
 
 ## Run locally
 
 ```bash
 npm install
 npm run dev        # http://localhost:5173
-
 npm run build      # type-check + production bundle in dist/
 npm run preview    # serve the build on http://localhost:4320
 ```
 
-Physics tuning telemetry (headless bot runs, prints time/speed-curve/launch/slam stats):
+Physics tuning telemetry:
 
 ```bash
-npx esbuild scripts/telemetry.ts --bundle --format=esm --outfile=/tmp/sundive-tel.mjs && node /tmp/sundive-tel.mjs
+npx esbuild scripts/telemetry.ts --bundle --format=esm --outfile=/tmp/st.mjs && node /tmp/st.mjs
 ```
 
 ## QA & screenshots
@@ -88,22 +97,19 @@ npx esbuild scripts/telemetry.ts --bundle --format=esm --outfile=/tmp/sundive-te
 ```bash
 npm run build
 npm run shots      # regenerates docs/screenshots/*.png (6 shots)
-npm run qa         # Playwright: 15 checks
+npm run qa         # Playwright: 18 checks
 ```
 
-QA verifies: loads without console errors, canvas non-blank, hold/release
-changes the trajectory (deterministic A/B over identical ticks), the finish is
-reachable in test mode, PB persists, the PB ghost appears on the second run,
-the daily seed is stable for a given date (`?date=YYYY-MM-DD` override), reduced
-motion doesn't break the sim, no horizontal overflow at 360/390/768/1440, and
-all screenshots are ≤ 4000×4000.
+QA verifies: loads without console errors, canvas non-blank, level N fields N
+rivals, hold/release changes the trajectory, **jump** lifts off, **nitro** spikes
+speed, an opponent can be stunned, the finish is reachable with a placement, PB
+persists, the daily seed is date-driven, reduced motion doesn't break the sim, no
+horizontal overflow at 360/390/768/1440, and screenshots are ≤ 4000×4000.
 
-Useful query params: `?seed=abc` (fixed free-run canyon), `?mode=free`,
-`?date=2026-07-04` (daily override), `?qa=1` (test hooks), `?reduce=1`.
+Query params: `?level=1..5`, `?mode=free`, `?seed=abc`, `?date=YYYY-MM-DD`,
+`?qa=1`, `?reduce=1`.
 
 ## Deploy (static)
-
-Any static host works — `dist/` is the whole game. On the VPS:
 
 ```bash
 docker build -t sundive .
@@ -113,8 +119,6 @@ docker run -d --name sundive -p 3900:80 sundive
 ```caddy
 sundive.k1ngp1n.com { reverse_proxy 127.0.0.1:3900 }
 ```
-
-(Or skip Docker entirely: `caddy file_server` pointed at `dist/`.)
 
 ---
 

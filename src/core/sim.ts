@@ -29,8 +29,23 @@ const PERFECT_MIN_HELD = 12 // ticks of dive before the release
 const PERFECT_RELEASE_WINDOW = 150 // released within ~1.2 s before takeoff
 const PERFECT_ANGLE_MIN = 0.24 // vy/speed at takeoff
 const PERFECT_ANGLE_MAX = 0.6
+// arcade mechanics
+const JUMP_IMPULSE = 13 // Space — a hop off the ground
+const BOOST_ACCEL = 62 // Enter/Shift — nitro shove
+const BOOST_CAP = 120 // raised soft cap while boosting
+const BOOST_TIME = 1.15 // seconds of thrust per charge
+const STUN_DRAG = 0.955 // per-tick velocity decay while stunned
 
-export type SimEventType = 'launch' | 'perfect' | 'slam' | 'land' | 'start' | 'checkpoint' | 'finish'
+export type SimEventType =
+  | 'launch'
+  | 'perfect'
+  | 'slam'
+  | 'land'
+  | 'start'
+  | 'checkpoint'
+  | 'finish'
+  | 'jump'
+  | 'boost'
 export interface SimEvent {
   type: SimEventType
   x: number
@@ -49,6 +64,8 @@ export interface SimState {
   startTick: number // fractional tick when the start line was crossed
   finishTick: number // fractional tick at the finish line (-1 until crossed)
   finished: boolean
+  boostT: number // seconds of boost thrust remaining
+  stunT: number // seconds of stun remaining
 }
 
 export interface Telemetry {
@@ -68,6 +85,8 @@ export class CometSim {
   private heldBeforeRelease = 0
   private wasGrounded = false
   private nextCheckpoint = 0
+  private jumpBuffer = 0
+  private wasBoosting = false
 
   constructor(terrain: Terrain, spawnX: number) {
     this.terrain = terrain
@@ -81,7 +100,31 @@ export class CometSim {
       startTick: -1,
       finishTick: -1,
       finished: false,
+      boostT: 0,
+      stunT: 0,
     }
+  }
+
+  /** Queue a hop; consumed next time the comet is grounded (short input buffer). */
+  requestJump(): void {
+    this.jumpBuffer = 10
+  }
+
+  /** Fire nitro thrust for BOOST_TIME seconds (ignored while stunned). */
+  fireBoost(): void {
+    if (this.state.stunT <= 0) this.state.boostT = BOOST_TIME
+  }
+
+  stun(seconds: number): void {
+    this.state.stunT = Math.max(this.state.stunT, seconds)
+    this.state.boostT = 0
+  }
+
+  get boosting(): boolean {
+    return this.state.boostT > 0
+  }
+  get stunned(): boolean {
+    return this.state.stunT > 0
   }
 
   /** Advance one fixed tick. `held` is the single input. Returns events fired this tick. */
@@ -89,6 +132,15 @@ export class CometSim {
     this.events.length = 0
     const s = this.state
     const t = this.terrain
+
+    if (s.boostT > 0) s.boostT = Math.max(0, s.boostT - DT)
+    if (s.stunT > 0) s.stunT = Math.max(0, s.stunT - DT)
+    const stunned = s.stunT > 0
+    const boosting = s.boostT > 0
+    if (boosting && !this.wasBoosting) this.events.push({ type: 'boost', x: s.x, y: s.y })
+    this.wasBoosting = boosting
+    if (this.jumpBuffer > 0) this.jumpBuffer--
+    held = held && !stunned // no diving while stunned
 
     if (held) {
       if (this.heldTicks === 0) this.heldBeforeRelease = 0
@@ -103,6 +155,13 @@ export class CometSim {
 
     const accel = G + (held ? DIVE : 0)
     s.vy -= accel * DT
+
+    // nitro: shove forward + along the current heading
+    if (boosting) {
+      const sp = Math.hypot(s.vx, s.vy) || 1
+      s.vx += (s.vx / sp) * BOOST_ACCEL * DT + BOOST_ACCEL * 0.45 * DT
+      s.vy += (s.vy / sp) * BOOST_ACCEL * DT
+    }
 
     const prevX = s.x
     s.x += s.vx * DT
@@ -150,7 +209,10 @@ export class CometSim {
         s.vx *= drag
         s.vy *= drag
       }
-      if (s.vx < MIN_VX && s.x < t.length) {
+      if (stunned) {
+        s.vx *= STUN_DRAG
+        s.vy *= STUN_DRAG
+      } else if (s.vx < MIN_VX && s.x < t.length) {
         s.vx += (MIN_VX - s.vx) * DT * 4
       }
     } else if (this.wasGrounded && !held) {
@@ -176,10 +238,20 @@ export class CometSim {
       }
     }
 
-    // soft speed cap
+    // hop off the ground (buffered a few ticks so an early press still fires)
+    if (this.jumpBuffer > 0 && groundedNow && !stunned) {
+      s.vy = Math.max(0, s.vy) + JUMP_IMPULSE
+      s.y += 0.05
+      groundedNow = false
+      this.jumpBuffer = 0
+      this.events.push({ type: 'jump', x: s.x, y: s.y })
+    }
+
+    // soft speed cap (raised while boosting)
+    const cap = boosting ? BOOST_CAP : SOFT_CAP
     const speed = Math.hypot(s.vx, s.vy)
-    if (speed > SOFT_CAP) {
-      const k = 1 - Math.min(0.9, ((speed - SOFT_CAP) / SOFT_CAP) * CAP_DRAG * DT * 60) * DT * 8
+    if (speed > cap) {
+      const k = 1 - Math.min(0.9, ((speed - cap) / cap) * CAP_DRAG * DT * 60) * DT * 8
       s.vx *= k
       s.vy *= k
     }

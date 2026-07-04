@@ -1,29 +1,26 @@
 import { Application } from 'pixi.js'
 import './ui/styles.css'
-import { dailySeedString, hashStr, mulberry32, randomSeedString } from './core/rng'
-import { fmtDelta, fmtTime, getState, setState } from './core/state'
-import { buildTerrain, INTRO_X, Terrain } from './core/terrain'
-import { CometSim, DT, makeBot, SimEvent } from './core/sim'
-import {
-  GhostData,
-  GhostPlayer,
-  GhostRecorder,
-  ghostTimesAt,
-  loadGhost,
-  loadPB,
-  makeSyntheticGhost,
-  saveGhost,
-  savePB,
-} from './core/ghost'
+import { dailySeedString, randomSeedString } from './core/rng'
+import { fmtTime, getState, setState } from './core/state'
+import { buildTerrain, Terrain } from './core/terrain'
+import { DT } from './core/sim'
+import { loadPB, savePB } from './core/ghost'
 import { Input } from './core/input'
-import { Renderer } from './render/renderer'
+import { Renderer, RacerRender } from './render/renderer'
 import { createHud } from './ui/hud'
+import { levelDef, unlockLevel } from './core/levels'
+import { buildCourse, Course } from './core/course'
+import { Field, makeField, opponentTick, Racer } from './core/racers'
 import {
+  playBonus,
+  playBoost,
   playCheckpoint,
   playFinish,
+  playJump,
   playLaunch,
+  playObstacle,
   playPerfect,
-  playSlam,
+  playStunHit,
   unlockAudio,
   updateAudio,
 } from './core/audio'
@@ -33,117 +30,117 @@ const qaMode = params.get('qa') === '1'
 const forceReduce = params.get('reduce') === '1'
 const dateOverride = params.get('date') ?? undefined
 const seedParam = params.get('seed')
-const modeParam = params.get('mode') === 'free' ? 'free' : 'daily'
+const levelParam = Math.max(1, Math.min(5, Number(params.get('level') || '1')))
+const dailyParam = params.get('mode') !== 'free'
 
 const reducedMotion = forceReduce || window.matchMedia('(prefers-reduced-motion: reduce)').matches
 setState({ reducedMotion })
 if (reducedMotion) document.body.classList.add('reduce-motion')
 
-// ---------------------------------------------------------------------------
+const BOOST_REFILL_PER_S = 0.2 // ~5 s to a full nitro charge
+const BONUS_BOOST = 0.6
+const STUN_LAND_BOOST = 0.5
 
 class Game {
   terrain!: Terrain
-  sim!: CometSim
-  recorder!: GhostRecorder
-  ghostData: GhostData | null = null
-  ghost: GhostPlayer | null = null
-  ghostCpTimes: (number | null)[] = []
-  ghostFinishMs: number | null = null
+  course!: Course
+  field!: Field
+  level = 1
+  daily = true
+  seed = ''
   private accumulator = 0
   private timeScale = 1
-  private timeScaleTarget = 1
   private hitstop = 0
   private slowmoHold = 0
-  simSpeed = 1 // QA fast-forward
+  simSpeed = 1
   autopilot = false
-  private bot: ((s: import('./core/sim').SimState) => boolean) | null = null
-  private attractTimeout = 0
-  private lastBotHeld = false
-  private aheadOfGhost: boolean | null = null
-  private lastOvertakeAt = -999
-  lastGhostPos: { x: number; y: number } | null = null
-  private taught = ((): boolean => {
-    try {
-      return localStorage.getItem('sundive:taught') === '1'
-    } catch {
-      return false
-    }
-  })()
+  private taught = ((): boolean => { try { return localStorage.getItem('sundive:taught') === '1' } catch { return false } })()
   private goodLaunches = 0
+  private attractTimer = 0
+  private bounceCd = 0
+  private aheadCount: number | null = null
+  private overtakeAt = -999
 
-  constructor(
-    private renderer: Renderer,
-    private input: Input,
-  ) {}
+  constructor(private renderer: Renderer, private input: Input) {}
 
-  setSeed(mode: 'daily' | 'free', seed?: string): void {
-    const s = mode === 'daily' ? dailySeedString(dateOverride) : (seed ?? randomSeedString())
-    setState({ mode, seed: s })
-    this.terrain = buildTerrain(s)
+  private pbKey(): string {
+    return `${this.seed}:L${this.level}`
+  }
+
+  setLevel(level: number, daily: boolean, seed?: string): void {
+    this.level = level
+    this.daily = daily
+    const def = levelDef(level)
+    this.seed = daily ? dailySeedString(dateOverride) : (seed ?? randomSeedString())
+    const worldSeed = `${this.seed}:L${level}`
+    this.terrain = buildTerrain(worldSeed, { length: def.length, ampScale: def.ampScale })
+    this.course = buildCourse(this.terrain, this.seed, level, def.obstacles, def.bonuses)
     this.renderer.init(this.terrain)
-    this.loadGhostFor(s)
+    this.renderer.setCourse(this.course)
+    this.field = makeField(this.terrain, this.seed, level)
+    this.renderer.setRacers(this.field.all.map((r) => ({ color: r.color, isPlayer: r.isPlayer })))
+    setState({
+      level,
+      daily,
+      seed: this.seed,
+      levelName: def.name,
+      racerCount: this.field.all.length,
+      pbMs: loadPB(this.pbKey()),
+    })
     this.reset('attract')
   }
 
-  private loadGhostFor(seed: string): void {
-    const pb = loadGhost(seed)
-    this.ghostData = pb ?? makeSyntheticGhost(this.terrain, seed)
-    this.ghost = new GhostPlayer(this.ghostData)
-    const cps = [...this.terrain.checkpoints, this.terrain.length]
-    this.ghostCpTimes = ghostTimesAt(this.ghostData, cps)
-    this.ghostFinishMs = this.ghostCpTimes[this.ghostCpTimes.length - 1]
-    setState({ ghostSource: this.ghostData.source, pbMs: loadPB(seed) })
-    hud.setGhostTime(this.ghostFinishMs)
+  reset(phase: 'attract' | 'running'): void {
+    this.field = makeField(this.terrain, this.seed, this.level)
+    this.renderer.setRacers(this.field.all.map((r) => ({ color: r.color, isPlayer: r.isPlayer })))
+    for (const o of this.course.obstacles) o.hit = false
+    for (const b of this.course.bonuses) b.taken = false
+    this.accumulator = 0
+    this.timeScale = 1
+    this.hitstop = 0
+    this.slowmoHold = 0
+    this.attractTimer = 0
+    this.aheadCount = null
+    this.renderer.clearTrails()
+    setState({ phase, timeMs: 0, boost: 1, boostReady: true, place: null, gapMs: null, newBest: false, won: false })
   }
 
   private markTaught(): void {
     if (this.taught) return
     this.taught = true
-    try {
-      localStorage.setItem('sundive:taught', '1')
-    } catch {
-      /* ignore */
-    }
+    try { localStorage.setItem('sundive:taught', '1') } catch { /* ignore */ }
     hud.setCoach(null)
   }
 
-  reset(phase: 'attract' | 'running'): void {
-    this.sim = new CometSim(this.terrain, INTRO_X + 4)
-    this.recorder = new GhostRecorder()
-    this.accumulator = 0
-    this.timeScale = 1
-    this.timeScaleTarget = 1
-    this.hitstop = 0
-    this.slowmoHold = 0
-    this.attractTimeout = 0
-    this.renderer.clearTrails()
-    this.bot = makeBot(this.terrain, mulberry32(hashStr(`attract:${getState().seed}`)), 0.4)
-    setState({ phase, timeMs: 0, deltaMs: null, newBest: false })
-  }
+  get player(): Racer { return this.field.player }
 
   begin(): void {
-    // seamless takeover from the attract flight if we're still before the line
-    if (getState().phase === 'attract') {
-      if (this.sim.state.x < -6) {
-        setState({ phase: 'running' })
-      } else {
-        this.reset('running')
-      }
-    }
+    if (getState().phase !== 'attract') return
+    if (this.player.sim.state.x < -6) setState({ phase: 'running' })
+    else this.reset('running')
+  }
+  restart(): void { this.reset('running') }
+  nextLevel(): void { this.setLevel(Math.min(5, this.level + 1), this.daily) }
+
+  playerJump(): void {
+    if (getState().phase !== 'running') return
+    this.player.sim.requestJump()
+    playJump()
+  }
+  playerBoost(): void {
+    const st = getState()
+    if (st.phase !== 'running' || !st.boostReady) return
+    setState({ boost: 0, boostReady: false })
+    this.player.sim.fireBoost()
+    this.renderer.pop()
+    this.renderer.addTrauma(0.15)
+    playBoost()
+    this.markTaught()
   }
 
-  restart(): void {
-    this.loadGhostFor(getState().seed) // pick up a fresh PB ghost if one was just set
-    this.reset('running')
-    hud.hideOverlays()
-  }
+  setBotSloppiness(): void { /* levels own opponent skill now */ }
 
-  /** QA/screenshots: swap the autopilot bot skill (lower = faster). */
-  setBotSloppiness(n: number): void {
-    this.bot = makeBot(this.terrain, mulberry32(hashStr(`bot-custom:${getState().seed}:${n}`)), n)
-  }
-
-  private onEvents(events: SimEvent[]): void {
+  private onPlayerEvents(events: import('./core/sim').SimEvent[]): void {
     for (const ev of events) {
       switch (ev.type) {
         case 'perfect':
@@ -155,90 +152,138 @@ class Game {
           this.markTaught()
           break
         case 'launch':
-          if ((ev.intensity ?? 0) > 0.25) {
-            playLaunch()
-            this.renderer.pop()
-            if (++this.goodLaunches >= 2) this.markTaught()
-          }
+          if ((ev.intensity ?? 0) > 0.25) { playLaunch(); if (++this.goodLaunches >= 2) this.markTaught() }
+          break
+        case 'jump':
+          this.renderer.burst(ev.x, ev.y, 'dive', 4)
+          break
+        case 'boost':
+          this.renderer.flashScreen(0xffe9b8, 0.12)
           break
         case 'slam': {
           const k = ev.intensity ?? 0.5
           this.renderer.burst(ev.x, ev.y, 'slam', Math.round(8 + k * 14))
           this.renderer.addTrauma(0.25 + k * 0.4)
           this.renderer.flashScreen(0xff5a3c, 0.1 + k * 0.12)
-          if (!getState().reducedMotion) this.hitstop = 0.06 + k * 0.05
-          hud.toast('Slam', 'slam')
-          playSlam(k)
+          if (!getState().reducedMotion) this.hitstop = 0.05 + k * 0.05
+          playObstacle()
           break
         }
-        case 'land':
-          if ((ev.intensity ?? 0) > 0.35) this.renderer.burst(ev.x, ev.y, 'land', 5)
+        case 'checkpoint':
           break
-        case 'checkpoint': {
-          const i = ev.checkpointIndex ?? 0
-          const ghostMs = this.ghostCpTimes[i]
-          if (ghostMs !== null && ghostMs !== undefined) {
-            const delta = this.sim.timeMs() - ghostMs
-            setState({ deltaMs: delta })
-            playCheckpoint(delta <= 0)
-            hud.toast(fmtDelta(delta), delta <= 0 ? '' : 'slam')
-          }
-          break
-        }
         case 'finish':
           this.onFinish()
           break
         case 'start':
-          this.aheadOfGhost = null
-          hud.banner('Beat the ghost to the finish', 'gold', 2200)
+          this.aheadCount = null
+          hud.banner('Beat them to the finish', 'gold', 2000)
           break
       }
     }
   }
 
+  private interactions(): void {
+    const p = this.player.sim.state
+    if (p.startTick < 0 || p.finishTick >= 0) return
+
+    // obstacles (all racers, per-racer cooldown)
+    for (const r of this.field.all) {
+      const s = r.sim.state
+      if (s.finishTick >= 0) continue
+      const gy = this.terrain.heightAt(s.x)
+      const nearGround = s.y - gy < 2.6
+      if (!nearGround || s.tick - r.lastHit < 40) continue
+      for (const o of this.course.obstacles) {
+        if (Math.abs(o.x - s.x) < 2.2) {
+          r.lastHit = s.tick
+          s.vx *= 0.5
+          s.vy *= 0.5
+          r.sim.stun(0.35)
+          if (r.isPlayer) {
+            this.renderer.burst(o.x, o.y + 2, 'slam', 10)
+            this.renderer.addTrauma(0.3)
+            this.renderer.flashScreen(0xff5a3c, 0.14)
+            playObstacle()
+            hud.toast('Crash!', 'bad')
+          }
+          break
+        }
+      }
+    }
+
+    // bonuses (player only)
+    for (const b of this.course.bonuses) {
+      if (b.taken) continue
+      if (Math.hypot(b.x - p.x, b.y - p.y) < 2.8) {
+        b.taken = true
+        this.renderer.burst(b.x, b.y, 'bonus', 12)
+        this.addBoost(BONUS_BOOST)
+        playBonus()
+      }
+    }
+
+    // stun-land: player descending onto a rival from above
+    this.bounceCd -= DT
+    if (p.vy < -2 && this.bounceCd <= 0) {
+      for (const opp of this.field.opponents) {
+        const os = opp.sim.state
+        if (os.stunT > 0 || os.finishTick >= 0) continue
+        if (Math.abs(os.x - p.x) < 2.4 && p.y - os.y > 0 && p.y - os.y < 3.6) {
+          opp.sim.stun(2)
+          p.vy = 9
+          this.bounceCd = 0.5
+          this.addBoost(STUN_LAND_BOOST)
+          this.renderer.burst(os.x, os.y, 'stun', 16, opp.color)
+          this.renderer.addTrauma(0.25)
+          playStunHit()
+          hud.toast(`Stunned ${opp.name}!`, 'gold')
+          break
+        }
+      }
+    }
+  }
+
+  private addBoost(n: number): void {
+    const st = getState()
+    const b = Math.min(1, st.boost + n)
+    setState({ boost: b, boostReady: b >= 1 })
+  }
+
+  private livePlace(): number {
+    const px = this.player.sim.state.x
+    let ahead = 0
+    for (const opp of this.field.opponents) {
+      const os = opp.sim.state
+      if (os.finishTick >= 0 || os.x > px) ahead++
+    }
+    return ahead + 1
+  }
+
   private onFinish(): void {
-    const ms = this.sim.timeMs()
-    const seed = getState().seed
-    const prevPB = loadPB(seed)
+    const ms = this.player.sim.timeMs()
+    // placement = 1 + rivals that already finished before the player
+    let ahead = 0
+    for (const opp of this.field.opponents) if (opp.sim.state.finishTick >= 0) ahead++
+    const place = ahead + 1
+    const won = place === 1
+    const prevPB = loadPB(this.pbKey())
     const newBest = prevPB === null || ms < prevPB
-    if (newBest) {
-      savePB(seed, ms)
-      saveGhost(this.recorder.finish(seed, ms, this.sim.state.startTick, this.sim.state))
-    }
-    const vsGhost = this.ghostFinishMs !== null ? ms - this.ghostFinishMs : null
-    setState({
-      phase: 'finished',
-      lastMs: ms,
-      pbMs: newBest ? ms : prevPB,
-      newBest,
-      deltaMs: vsGhost,
-      timeMs: ms,
-    })
-    if (!getState().reducedMotion) {
-      this.timeScale = 0.22
-      this.slowmoHold = 0.9
-    }
-    const won = vsGhost !== null && vsGhost <= 0
-    hud.banner(won ? 'You win!' : 'The ghost wins', won ? 'gold' : 'ice', 1600)
+    if (newBest) savePB(this.pbKey(), ms)
+    if (won) unlockLevel(this.level + 1)
+    setState({ phase: 'finished', lastMs: ms, pbMs: newBest ? ms : prevPB, newBest, place, won, timeMs: ms })
+    if (!getState().reducedMotion) { this.timeScale = 0.22; this.slowmoHold = 0.9 }
+    hud.banner(won ? 'You win!' : `${place}${place === 2 ? 'nd' : place === 3 ? 'rd' : 'th'} place`, won ? 'gold' : 'ice', 1600)
     this.renderer.flashScreen(won ? 0xffd27a : 0x9fd8e8, 0.16)
     this.renderer.addTrauma(0.2)
-    playFinish(newBest)
+    playFinish(won || newBest)
     hud.showFinish()
   }
 
-  /** rAF driver: fixed-timestep sim + interpolation-free render (120 Hz sim is smooth enough). */
   frame(rawDt: number): void {
     const st = getState()
-    // time scaling: hitstop -> slow-mo -> normal
-    if (this.hitstop > 0) {
-      this.hitstop -= rawDt
-      this.timeScale = 0.05
-    } else if (this.slowmoHold > 0) {
-      this.slowmoHold -= rawDt
-    } else {
-      this.timeScaleTarget = 1
-      this.timeScale += (this.timeScaleTarget - this.timeScale) * Math.min(1, rawDt * 5)
-    }
+    if (this.hitstop > 0) { this.hitstop -= rawDt; this.timeScale = 0.05 }
+    else if (this.slowmoHold > 0) this.slowmoHold -= rawDt
+    else this.timeScale += (1 - this.timeScale) * Math.min(1, rawDt * 5)
 
     const simDt = Math.min(rawDt, 0.05) * this.timeScale * this.simSpeed
     this.accumulator += simDt
@@ -247,97 +292,136 @@ class Game {
     while (this.accumulator >= DT && steps < maxSteps) {
       this.accumulator -= DT
       steps++
+
+      // opponents
+      for (const opp of this.field.opponents) {
+        const held = opponentTick(opp, this.terrain, this.course, DT)
+        opp.sim.step(held)
+      }
+      // player
       let held: boolean
-      if (this.autopilot && this.bot) held = this.bot(this.sim.state)
-      else if (st.phase === 'attract') held = this.bot ? this.bot(this.sim.state) : false
+      if (this.autopilot) held = opponentTick(this.player, this.terrain, this.course, DT)
+      else if (st.phase === 'attract') { held = opponentTick(this.player, this.terrain, this.course, DT); this.attractHeld = held }
       else held = this.input.isHeld()
-      this.lastBotHeld = held
+      const events = this.player.sim.step(held)
+      if (st.phase !== 'attract') this.onPlayerEvents(events)
 
-      this.recorder.record(this.sim.state)
-      const events = this.sim.step(held)
-      if (st.phase !== 'attract') this.onEvents(events)
+      if (st.phase === 'running') {
+        this.interactions()
+        // boost meter refill
+        if (!getState().boostReady) this.addBoost(BOOST_REFILL_PER_S * DT)
+      }
 
-      // attract loop: reset before the run gets deep
       if (st.phase === 'attract') {
-        this.attractTimeout += DT
-        if (this.attractTimeout > 14 || this.sim.state.x > this.terrain.length * 0.3) {
-          this.reset('attract')
-          break
-        }
+        this.attractTimer += DT
+        if (this.attractTimer > 13 || this.player.sim.state.x > this.terrain.length * 0.35) { this.reset('attract'); break }
       }
     }
 
-    // live HUD state
+    // HUD state
     if (st.phase === 'running') {
-      setState({ timeMs: this.sim.timeMs(), speed: this.sim.speed(), holding: this.input.isHeld() })
-    } else if (st.phase === 'attract') {
-      setState({ speed: this.sim.speed() })
-    }
-
-    const s = this.sim.state
-    const ghostPos =
-      this.ghost && st.phase !== 'attract' && s.startTick >= 0
-        ? this.ghost.at(s.tick, s.startTick)
-        : null
-    this.lastGhostPos = ghostPos
-    this.renderer.render(s.x, s.y, this.sim.speed(), this.input.isHeld(), s.grounded, ghostPos, rawDt)
-    updateAudio(this.sim.speed(), this.input.isHeld() && st.phase === 'running')
-
-    // course progress dots
-    const prog = Math.max(0, Math.min(1, s.x / this.terrain.length))
-    const gprog = ghostPos ? Math.max(0, Math.min(1, ghostPos.x / this.terrain.length)) : 0
-    setState({ progress: prog, ghostProgress: gprog })
-
-    // overtake drama: who leads, announced on every lead change (rate-limited)
-    if (st.phase === 'running' && ghostPos && s.startTick >= 0 && s.finishTick < 0) {
-      const ahead = s.x > ghostPos.x
-      if (this.aheadOfGhost === null) {
-        this.aheadOfGhost = ahead
-      } else if (ahead !== this.aheadOfGhost && st.timeMs - this.lastOvertakeAt > 1500) {
-        this.aheadOfGhost = ahead
-        this.lastOvertakeAt = st.timeMs
-        if (ahead) {
-          hud.banner('Ahead!', 'gold', 1000)
-          playCheckpoint(true)
-        } else {
-          hud.banner('Behind — dive!', 'bad', 1200)
-          playCheckpoint(false)
-        }
+      const place = this.livePlace()
+      const nearest = this.nearestGapMs()
+      setState({ timeMs: this.player.sim.timeMs(), speed: this.player.sim.speed(), holding: this.input.isHeld(), place, gapMs: nearest })
+      // overtake drama
+      if (this.aheadCount === null) this.aheadCount = place
+      else if (place !== this.aheadCount && st.timeMs - this.overtakeAt > 1400) {
+        const gained = place < this.aheadCount
+        this.aheadCount = place
+        this.overtakeAt = st.timeMs
+        hud.banner(gained ? (place === 1 ? 'Took the lead!' : 'Overtake!') : 'Passed — dive!', gained ? 'gold' : 'bad', 1000)
+        playCheckpoint(gained)
       }
+    } else if (st.phase === 'attract') {
+      setState({ speed: this.player.sim.speed() })
     }
 
-    // --- onboarding layer: demo input, coach prompts, comet labels
+    this.renderAll(rawDt)
+  }
+
+  private nearestGapMs(): number | null {
+    // gap to nearest rival by x, expressed as est. time (dx / speed)
+    const p = this.player.sim.state
+    let best: number | null = null
+    for (const opp of this.field.opponents) {
+      const dx = opp.sim.state.x - p.x
+      const gap = dx / Math.max(12, this.player.sim.speed())
+      if (best === null || Math.abs(gap) < Math.abs(best)) best = gap
+    }
+    return best === null ? null : best * 1000
+  }
+
+  private renderAll(rawDt: number): void {
+    const st = getState()
+    const states: RacerRender[] = this.field.all.map((r) => {
+      const s = r.sim.state
+      return {
+        x: s.x, y: s.y, speed: r.sim.speed(),
+        holding: r.isPlayer ? this.input.isHeld() : false,
+        grounded: s.grounded, boosting: r.sim.boosting, stunned: r.sim.stunned,
+        isPlayer: r.isPlayer, color: r.color,
+      }
+    })
+    this.renderer.render(states, rawDt)
+    updateAudio(this.player.sim.speed(), this.input.isHeld() && st.phase === 'running')
+
+    // course dots
+    hud.setRacerDots(
+      this.field.all.map((r) => ({
+        frac: Math.max(0, Math.min(1, r.sim.state.x / this.terrain.length)),
+        color: r.color,
+        isPlayer: r.isPlayer,
+      })),
+    )
+
+    // onboarding
+    const p = this.player.sim.state
     if (st.phase === 'attract') {
-      hud.setDemoInput(true, this.lastBotHeld)
+      hud.setDemoInput(true, this.attractHeld)
       hud.setCoach(null)
-      hud.setLabels(null, null)
+      hud.setLabels([])
     } else if (st.phase === 'running' && !this.taught) {
       hud.setDemoInput(true, this.input.isHeld())
-      const slope = this.terrain.slopeAt(s.x)
+      const slope = this.terrain.slopeAt(p.x)
       const heldNow = this.input.isHeld()
-      if (s.grounded && slope < -0.04 && !heldNow && this.sim.speed() < 55) hud.setCoach('Hold — dive!')
-      else if (s.grounded && heldNow && slope > 0.03) hud.setCoach('Release — fly!')
+      if (p.grounded && slope < -0.04 && !heldNow && this.player.sim.speed() < 55) hud.setCoach('Hold — dive!')
+      else if (p.grounded && heldNow && slope > 0.03) hud.setCoach('Release — fly!')
       else hud.setCoach(null)
-      const you = this.renderer.project(s.x, s.y)
-      hud.setLabels(you, ghostPos ? this.renderer.project(ghostPos.x, ghostPos.y) : null)
-    } else if (st.phase === 'running' && this.sim.timeMs() < 5000 && ghostPos) {
-      // even for taught players, name the rival for the first seconds of a run
+      hud.setLabels(this.labelList())
+    } else if (st.phase === 'running' && this.player.sim.timeMs() < 4500) {
       hud.setDemoInput(false, false)
       hud.setCoach(null)
-      hud.setLabels(this.renderer.project(s.x, s.y), this.renderer.project(ghostPos.x, ghostPos.y))
+      hud.setLabels(this.labelList())
     } else {
       hud.setDemoInput(false, false)
       hud.setCoach(null)
-      hud.setLabels(null, null)
+      hud.setLabels([])
     }
+  }
+
+  private attractHeld = false
+  private labelList(): { x: number; y: number; text: string; color: number }[] {
+    const out: { x: number; y: number; text: string; color: number }[] = []
+    const pp = this.renderer.project(this.player.sim.state.x, this.player.sim.state.y)
+    out.push({ x: pp.x, y: pp.y, text: 'YOU', color: 0xffd27a })
+    // nearest rival on screen
+    let nearest: Racer | null = null
+    let nd = Infinity
+    for (const opp of this.field.opponents) {
+      const d = Math.abs(opp.sim.state.x - this.player.sim.state.x)
+      if (d < nd) { nd = d; nearest = opp }
+    }
+    if (nearest && nd < 60) {
+      const gp = this.renderer.project(nearest.sim.state.x, nearest.sim.state.y)
+      out.push({ x: gp.x, y: gp.y, text: nearest.name.toUpperCase(), color: nearest.color })
+    }
+    return out
   }
 
   shareText(): string {
     const st = getState()
     const t = st.lastMs !== null ? fmtTime(st.lastMs) : '—'
-    const mode = st.mode === 'daily' ? `Daily ${st.seed}` : `Canyon ${st.seed}`
-    const vs = st.deltaMs !== null ? ` (${fmtDelta(st.deltaMs)} vs ghost)` : ''
-    return `SUNDIVE · ${mode} · ${t}${vs} — hold to dive, release to soar`
+    return `SUNDIVE · Lv${st.level} ${st.levelName} · ${st.place ? st.place + (st.place === 1 ? 'st' : st.place === 2 ? 'nd' : st.place === 3 ? 'rd' : 'th') : ''} · ${t}${st.won ? ' 🏆' : ''}`
   }
 }
 
@@ -365,21 +449,21 @@ const boot = async (): Promise<void> => {
 
   hud = createHud({
     onRestart: () => game.restart(),
-    onMode: (mode) => game.setSeed(mode),
+    onLevel: (lvl, daily) => game.setLevel(lvl, daily),
+    onNext: () => game.nextLevel(),
+    onJump: () => game.playerJump(),
+    onBoost: () => game.playerBoost(),
     shareText: () => game.shareText(),
   })
 
-  input.onFirstInput = () => {
-    unlockAudio()
-    game.begin()
-  }
+  input.onFirstInput = () => { unlockAudio(); game.begin() }
   input.onRestart = () => game.restart()
+  input.onJump = () => { game.begin(); game.playerJump() }
+  input.onBoost = () => { game.begin(); game.playerBoost() }
 
-  game.setSeed(modeParam, seedParam ?? undefined)
+  game.setLevel(levelParam, dailyParam, seedParam ?? undefined)
 
-  app.ticker.add((t) => {
-    game.frame(t.deltaMS / 1000)
-  })
+  app.ticker.add((t) => game.frame(t.deltaMS / 1000))
   window.addEventListener('resize', () => {
     app.renderer.resize(Math.max(2, stageEl.clientWidth), Math.max(2, stageEl.clientHeight))
     renderer.resize()
@@ -388,33 +472,39 @@ const boot = async (): Promise<void> => {
   document.getElementById('veil')?.classList.add('gone')
   setState({ ready: true })
 
-  // ---- QA / debug API
   const api = {
-    version: '1.0.0',
-    get ready() {
-      return getState().ready
-    },
+    version: '2.0.0',
+    get ready() { return getState().ready },
     state: () => ({ ...getState() }),
-    pos: () => [game.sim.state.x, game.sim.state.y] as const,
-    vel: () => [game.sim.state.vx, game.sim.state.vy] as const,
-    speed: () => game.sim.speed(),
-    timeMs: () => game.sim.timeMs(),
+    pos: () => [game.player.sim.state.x, game.player.sim.state.y] as const,
+    vel: () => [game.player.sim.state.vx, game.player.sim.state.vy] as const,
+    speed: () => game.player.sim.speed(),
+    timeMs: () => game.player.sim.timeMs(),
     seed: () => getState().seed,
     phase: () => getState().phase,
-    ghostSource: () => getState().ghostSource,
+    level: () => getState().level,
+    place: () => getState().place,
+    boost: () => getState().boost,
+    grounded: () => game.player.sim.state.grounded,
     hold: (v: boolean | null) => input.force(v),
+    jump: () => game.playerJump(),
+    fireBoost: () => { setState({ boost: 1, boostReady: true }); game.playerBoost() },
     begin: () => game.begin(),
     restart: () => game.restart(),
-    setMode: (m: 'daily' | 'free', seed?: string) => game.setSeed(m, seed),
+    setLevel: (lvl: number, daily = true, seed?: string) => game.setLevel(lvl, daily, seed),
+    nextLevel: () => game.nextLevel(),
     autopilot: (on: boolean) => (game.autopilot = on),
-    botSloppiness: (n: number) => game.setBotSloppiness(n),
-    grounded: () => game.sim.state.grounded,
-    ghostPos: () => (game.lastGhostPos ? [game.lastGhostPos.x, game.lastGhostPos.y] : null),
-    simSpeed: (n: number) => (game.simSpeed = Math.max(0.1, Math.min(qaMode ? 400 : 1, n))),
-    tick: () => game.sim.state.tick,
+    simSpeed: (n: number) => (game.simSpeed = Math.max(0.0001, Math.min(qaMode ? 400 : 1, n))),
+    tick: () => game.player.sim.state.tick,
+    opponents: () => game.field.opponents.length,
+    stunNearest: () => {
+      const o = game.field.opponents[0]
+      if (o) o.sim.stun(2)
+      return !!o
+    },
+    opponentStunned: () => game.field.opponents.some((o) => o.sim.stunned),
   }
   ;(window as unknown as { __SUNDIVE__: typeof api }).__SUNDIVE__ = api
-  void qaMode
 }
 
 void boot()

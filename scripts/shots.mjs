@@ -17,83 +17,54 @@ async function open(ctx, url) {
   return page
 }
 const S = (page, fn, ...a) => page.evaluate(({ fn, a }) => window.__SUNDIVE__[fn](...a), { fn, a })
-
-/** Poll a predicate every 150 ms with a generous budget; logs on timeout. */
-async function huntMoment(page, name, predicate, budgetMs = 90000) {
+async function hunt(page, pred, budget = 90000) {
   const t0 = Date.now()
-  while (Date.now() - t0 < budgetMs) {
-    const hit = await page.evaluate(predicate)
-    if (hit) return true
-    await page.waitForTimeout(150)
-  }
-  console.log(`WARN: moment "${name}" not found in ${budgetMs}ms — capturing as-is`)
+  while (Date.now() - t0 < budget) { if (await page.evaluate(pred)) return true; await page.waitForTimeout(120) }
+  console.log('WARN: moment not found')
   return false
 }
 
 const desk = await browser.newContext({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 2 })
-const page = await open(desk, `${URL}/?qa=1&date=2026-07-04`)
-
-// start (attract + overlay)
-await page.waitForTimeout(1800)
+// start / level select — unlock a few levels first so the select looks alive
+const page = await open(desk, `${URL}/?qa=1&date=2026-07-04&level=3`)
+await page.evaluate(() => localStorage.setItem('sundive:unlocked', '4'))
+await S(page, 'setLevel', 3, true)
+await page.waitForTimeout(1500)
 await page.screenshot({ path: `${OUT}/sundive-start.png` })
 console.log('shot sundive-start')
 
-// build a PB first so later shots race the PB ghost
-await S(page, 'begin')
-await S(page, 'autopilot', true)
-await S(page, 'simSpeed', 150)
-await huntMoment(page, 'finish', () => window.__SUNDIVE__.phase() === 'finished')
-await S(page, 'simSpeed', 1)
-await page.waitForTimeout(700)
-await page.screenshot({ path: `${OUT}/sundive-finish.png` })
-console.log('shot sundive-finish')
+// race — 3 rivals on screen, a few seconds in
+await S(page, 'begin'); await S(page, 'autopilot', true); await S(page, 'simSpeed', 2)
+await hunt(page, () => window.__SUNDIVE__.timeMs() > 4000 && window.__SUNDIVE__.timeMs() < 9000)
+await S(page, 'simSpeed', 1); await page.waitForTimeout(60)
+await page.screenshot({ path: `${OUT}/sundive-race.png` })
+console.log('shot sundive-race')
 
-// second run vs PB ghost — faster bot so the ghost visibly trails behind
-await S(page, 'restart')
-await S(page, 'botSloppiness', 0.12)
-await S(page, 'autopilot', true)
-await S(page, 'simSpeed', 2)
-await huntMoment(page, 'speed', () => window.__SUNDIVE__.speed() > 55 && window.__SUNDIVE__.grounded())
-await S(page, 'simSpeed', 1)
-await page.waitForTimeout(60)
-await page.screenshot({ path: `${OUT}/sundive-speed.png` })
-console.log('shot sundive-speed')
+// boost — fire nitro on a descent
+await S(page, 'fireBoost'); await page.waitForTimeout(90)
+await page.screenshot({ path: `${OUT}/sundive-boost.png` })
+console.log('shot sundive-boost')
 
-// launch: airborne, rising
+// launch — airborne, rising
 await S(page, 'simSpeed', 2)
-await huntMoment(page, 'launch', () => {
-  const v = window.__SUNDIVE__.vel()
-  return !window.__SUNDIVE__.grounded() && v[1] > 5 && window.__SUNDIVE__.speed() > 35
-})
+await hunt(page, () => { const v = window.__SUNDIVE__.vel(); return !window.__SUNDIVE__.grounded() && v[1] > 5 && window.__SUNDIVE__.speed() > 35 })
 await S(page, 'simSpeed', 1)
 await page.screenshot({ path: `${OUT}/sundive-launch.png` })
 console.log('shot sundive-launch')
 
-// ghost race: catch the moment both comets share the frame
-await S(page, 'restart')
-await S(page, 'botSloppiness', 0.45)
-await S(page, 'autopilot', true)
-await S(page, 'simSpeed', 2)
-await huntMoment(page, 'ghost-race', () => {
-  const gp = window.__SUNDIVE__.ghostPos()
-  const p = window.__SUNDIVE__.pos()
-  if (!gp) return false
-  const dx = gp[0] - p[0]
-  return window.__SUNDIVE__.timeMs() > 1500 && dx > 6 && dx < 55
-})
-await S(page, 'simSpeed', 1)
-await page.waitForTimeout(60)
-await page.screenshot({ path: `${OUT}/sundive-ghost-race.png` })
-console.log('shot sundive-ghost-race')
+// finish
+await S(page, 'simSpeed', 150)
+await hunt(page, () => window.__SUNDIVE__.phase() === 'finished')
+await S(page, 'simSpeed', 1); await page.waitForTimeout(700)
+await page.screenshot({ path: `${OUT}/sundive-finish.png` })
+console.log('shot sundive-finish')
 await desk.close()
 
 // mobile
 const mob = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true })
-const mp = await open(mob, `${URL}/?qa=1&date=2026-07-04`)
-await S(mp, 'begin')
-await S(mp, 'autopilot', true)
-await S(mp, 'simSpeed', 2)
-await huntMoment(mp, 'mobile-speed', () => window.__SUNDIVE__.speed() > 40)
+const mp = await open(mob, `${URL}/?qa=1&date=2026-07-04&level=2`)
+await S(mp, 'begin'); await S(mp, 'autopilot', true); await S(mp, 'simSpeed', 2)
+await hunt(mp, () => window.__SUNDIVE__.speed() > 40)
 await S(mp, 'simSpeed', 1)
 await mp.screenshot({ path: `${OUT}/sundive-mobile.png` })
 console.log('shot sundive-mobile')
