@@ -1,6 +1,6 @@
 import { fmtTime, getState, ordinal, setState, subscribe } from '../core/state'
 import { toggleMute, unlockAudio } from '../core/audio'
-import { LEVELS, unlockedLevels } from '../core/levels'
+import { LEVELS, unlockLevel, unlockedLevels } from '../core/levels'
 
 export interface HudDeps {
   onRestart: () => void
@@ -99,35 +99,61 @@ export function createHud(deps: HudDeps): Hud {
   root.appendChild(labelWrap)
 
   // touch controls: a d-pad on the left (WASD), NITRO on the right
+  let touchControls: HTMLElement | null = null
   let tcBoost: HTMLElement | null = null
+  let rotateTip: HTMLElement | null = null
   if (isTouch) {
     const tc = el('div', 'touch-controls')
     tc.innerHTML = `
       <div class="dpad">
-        <button class="tbtn jump no-hold" data-k="jump">▲</button>
-        <button class="tbtn rev no-hold" data-k="rev">◀</button>
-        <button class="tbtn go no-hold" data-k="go">▶</button>
-        <button class="tbtn brake no-hold" data-k="brake">▼</button>
+        <button class="tbtn jump no-hold" type="button" data-k="jump" aria-label="Jump">▲</button>
+        <button class="tbtn rev no-hold" type="button" data-k="rev" aria-label="Reverse">◀</button>
+        <button class="tbtn go no-hold" type="button" data-k="go" aria-label="Dive">▶</button>
+        <button class="tbtn brake no-hold" type="button" data-k="brake" aria-label="Brake">▼</button>
       </div>
-      <button class="tbtn boost big no-hold">NITRO</button>`
+      <button class="tbtn boost big no-hold" type="button" aria-label="Nitro boost">
+        <span class="boost-main">NITRO</span>
+        <span class="boost-sub">READY</span>
+      </button>`
     root.appendChild(tc)
+    touchControls = tc
     const tap = (sel: string, fn: () => void) => {
       const b = tc.querySelector(sel) as HTMLElement
-      b.addEventListener('pointerdown', (e) => { e.preventDefault(); fn() })
+      let pid: number | null = null
+      const off = (e?: Event) => {
+        if (pid !== null && e && (e as PointerEvent).pointerId !== pid) return
+        pid = null
+        b.classList.remove('down')
+        b.setAttribute('aria-pressed', 'false')
+      }
+      b.setAttribute('aria-pressed', 'false')
+      b.addEventListener('pointerdown', (e) => {
+        e.preventDefault()
+        pid = (e as PointerEvent).pointerId
+        try { b.setPointerCapture(pid) } catch { /* ignore */ }
+        b.classList.add('down')
+        b.setAttribute('aria-pressed', 'true')
+        window.setTimeout(() => off(), 180)
+        fn()
+      })
+      b.addEventListener('pointerup', off)
+      b.addEventListener('pointercancel', off)
+      b.addEventListener('lostpointercapture', off)
     }
     // Each hold pad captures its own pointer, so multi-touch (e.g. hold GO + tap
     // JUMP) works — a pad only releases when its own finger lifts, not on any tap.
     const hold = (sel: string, set: (v: boolean) => void) => {
       const b = tc.querySelector(sel) as HTMLElement
       let pid: number | null = null
+      b.setAttribute('aria-pressed', 'false')
       b.addEventListener('pointerdown', (e) => {
         e.preventDefault(); pid = (e as PointerEvent).pointerId
         try { b.setPointerCapture(pid) } catch { /* ignore */ }
-        b.classList.add('down'); set(true)
+        b.classList.add('down'); b.setAttribute('aria-pressed', 'true'); set(true)
       })
       const off = (e: Event) => {
         if (pid !== null && (e as PointerEvent).pointerId !== pid) return
-        pid = null; b.classList.remove('down'); set(false)
+        pid = null; b.classList.remove('down'); b.setAttribute('aria-pressed', 'false'); set(false)
       }
       b.addEventListener('pointerup', off)
       b.addEventListener('pointercancel', off)
@@ -140,7 +166,32 @@ export function createHud(deps: HudDeps): Hud {
     hold('.brake', deps.setBrake)
     hold('.rev', deps.setReverse)
     // safety net: losing focus clears any stuck pad
-    window.addEventListener('blur', () => { deps.setGo(false); deps.setBrake(false); deps.setReverse(false); tc.querySelectorAll('.down').forEach((e) => e.classList.remove('down')) })
+    window.addEventListener('blur', () => {
+      deps.setGo(false); deps.setBrake(false); deps.setReverse(false)
+      tc.querySelectorAll('.down').forEach((e) => {
+        e.classList.remove('down')
+        e.setAttribute('aria-pressed', 'false')
+      })
+    })
+
+    rotateTip = el(
+      'div',
+      'rotate-tip hidden',
+      `<span>Best in landscape</span><button class="no-hold" type="button">Rotate</button>`,
+    )
+    root.appendChild(rotateTip)
+    rotateTip.querySelector('button')?.addEventListener('click', async (e) => {
+      e.preventDefault()
+      try {
+        if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.()
+        const orientation = screen.orientation as ScreenOrientation & { lock?: (orientation: string) => Promise<void> }
+        await orientation.lock?.('landscape')
+        rotateTip?.classList.add('hidden')
+      } catch {
+        const msg = rotateTip?.querySelector('span')
+        if (msg) msg.textContent = 'Turn phone sideways for wide controls'
+      }
+    })
   }
 
   // ---- start overlay
@@ -151,6 +202,7 @@ export function createHud(deps: HudDeps): Hud {
 
   let selDaily = true
   let selLevel = 1
+  let pendingUnlockLevel: number | null = null
   const renderStart = (): void => {
     const unlocked = unlockedLevels()
     selLevel = Math.min(selLevel, unlocked)
@@ -161,7 +213,7 @@ export function createHud(deps: HudDeps): Hud {
       <div class="sub"><b>Hold</b>/<b>D</b> dive · <b>W</b>/<b>Space</b> jump · <b>Shift</b> nitro</div>
       <div class="level-row">${LEVELS.map((l) => {
         const locked = l.n > unlocked
-        return `<button class="lvl-btn ${l.n === selLevel ? 'on' : ''} ${locked ? 'locked' : ''}" data-lvl="${l.n}" ${locked ? 'disabled' : ''}>${locked ? '🔒' : l.n}</button>`
+        return `<button class="lvl-btn ${l.n === selLevel ? 'on' : ''} ${locked ? 'locked' : ''}" type="button" data-lvl="${l.n}" aria-label="${locked ? `Level ${l.n} locked. Demo unlock available.` : `Level ${l.n}`}">${locked ? '🔒' : l.n}</button>`
       }).join('')}</div>
       <div class="level-name">Lv ${selLevel} · ${LEVELS[selLevel - 1].name} · ${LEVELS[selLevel - 1].opponents} rival${LEVELS[selLevel - 1].opponents > 1 ? 's' : ''}</div>
       <div class="mode-row">
@@ -201,6 +253,25 @@ export function createHud(deps: HudDeps): Hud {
     ${CONTROLS_HTML}
     <div class="mode-row"><button class="big-btn" data-a="closehelp">Got it</button></div>`
 
+  // ---- demo unlock confirmation
+  const unlock = el('div', 'overlay hidden')
+  const unlockCard = el('div', 'panel card unlock-card')
+  unlock.appendChild(unlockCard)
+  root.appendChild(unlock)
+  const renderUnlock = (): void => {
+    const lvl = pendingUnlockLevel ?? 1
+    const def = LEVELS[lvl - 1]
+    unlockCard.innerHTML = `
+      <div class="kicker">Portfolio demo</div>
+      <div class="title small">Unlock level ${lvl}?</div>
+      <div class="sub goal-line">Normally this opens after winning earlier races. For this demo, you can unlock it now and inspect the different biome, rivals, hazards, and pacing.</div>
+      <div class="level-name">Lv ${lvl} · ${def.name} · ${def.opponents} rivals · ${def.biome}</div>
+      <div class="mode-row">
+        <button class="big-btn" data-a="unlock">Open level</button>
+        <button class="ghost-btn" data-a="cancelunlock">Not now</button>
+      </div>`
+  }
+
   // ---- finish overlay
   const fin = el('div', 'overlay hidden')
   const finCard = el('div', 'panel card')
@@ -212,6 +283,7 @@ export function createHud(deps: HudDeps): Hud {
     const won = s.won
     const last = s.level >= LEVELS.length
     const verdict = won ? 'You win!' : s.place ? `${ordinal(s.place)} of ${s.racerCount}` : 'Finish'
+    const retryHint = isTouch ? (won && !last ? 'Tap Next level or Replay' : 'Tap Try again to retry') : 'R — instant retry'
     finCard.innerHTML = `
       <div class="kicker">Lv ${s.level} · ${s.levelName}</div>
       <div class="fin-verdict ${won ? 'ahead' : 'behind'}">${verdict}</div>
@@ -224,7 +296,7 @@ export function createHud(deps: HudDeps): Hud {
         <button class="ghost-btn" data-a="menu">Levels</button>
       </div>
       <div class="share-note"></div>
-      <div class="hint-line">R — instant retry</div>`
+      <div class="hint-line">${retryHint}</div>`
   }
 
   // ---- wiring
@@ -239,6 +311,16 @@ export function createHud(deps: HudDeps): Hud {
     else if (a === 'resume') deps.onPause()
     else if (a === 'help') help.classList.remove('hidden')
     else if (a === 'closehelp') help.classList.add('hidden')
+    else if (a === 'unlock') {
+      if (pendingUnlockLevel !== null) {
+        unlockLevel(pendingUnlockLevel)
+        selLevel = pendingUnlockLevel
+        pendingUnlockLevel = null
+        unlock.classList.add('hidden')
+        renderStart()
+      }
+    }
+    else if (a === 'cancelunlock') { pendingUnlockLevel = null; unlock.classList.add('hidden') }
     else if (a === 'share') {
       const text = deps.shareText()
       const note = card.querySelector('.share-note') as HTMLElement | null
@@ -248,13 +330,25 @@ export function createHud(deps: HudDeps): Hud {
   startCard.addEventListener('click', (e) => {
     const t = e.target as HTMLElement
     const lvl = t.closest('.lvl-btn') as HTMLElement | null
-    if (lvl && !lvl.classList.contains('locked')) { selLevel = Number(lvl.dataset.lvl); renderStart(); return }
+    if (lvl) {
+      const level = Number(lvl.dataset.lvl)
+      if (lvl.classList.contains('locked')) {
+        pendingUnlockLevel = level
+        renderUnlock()
+        unlock.classList.remove('hidden')
+      } else {
+        selLevel = level
+        renderStart()
+      }
+      return
+    }
     const a = t.closest('button')?.dataset.a
     if (a) act(a, startCard)
   })
   finCard.addEventListener('click', (e) => { const a = (e.target as HTMLElement).closest('button')?.dataset.a; if (a) act(a, finCard) })
   pauseCard.addEventListener('click', (e) => { const a = (e.target as HTMLElement).closest('button')?.dataset.a; if (a) act(a, pauseCard) })
   helpCard.addEventListener('click', (e) => { const a = (e.target as HTMLElement).closest('button')?.dataset.a; if (a) act(a, helpCard) })
+  unlockCard.addEventListener('click', (e) => { const a = (e.target as HTMLElement).closest('button')?.dataset.a; if (a) act(a, unlockCard) })
   restartBtn.addEventListener('click', () => deps.onRestart())
   soundBtn.addEventListener('click', () => { unlockAudio(); toggleMute() })
   pauseBtn.addEventListener('click', () => deps.onPause())
@@ -269,6 +363,12 @@ export function createHud(deps: HudDeps): Hud {
 
   // ---- reactive
   let lastPhase = ''
+  const syncOrientationTip = (s = getState()): void => {
+    const portrait = window.innerHeight > window.innerWidth
+    const shouldShow = !!rotateTip && s.phase === 'running' && !s.paused && portrait && window.innerWidth <= 760
+    rotateTip?.classList.toggle('hidden', !shouldShow)
+  }
+  window.addEventListener('resize', () => syncOrientationTip())
   subscribe((s) => {
     timeT.textContent = fmtTime(s.timeMs)
     if (s.phase === 'running' && s.place) {
@@ -278,12 +378,25 @@ export function createHud(deps: HudDeps): Hud {
     corner.innerHTML = `LV ${s.level} · <b>${s.levelName}</b><br/>${s.daily ? 'daily ' : ''}<b>${s.seed}</b>${s.pbMs !== null ? ` · best <b>${fmtTime(s.pbMs)}</b>` : ''}`
     ;(speed.querySelector('b') as HTMLElement).textContent = String(Math.round(s.speed))
     soundBtn.classList.toggle('active', !s.muted)
-    nitroFill.style.width = `${Math.round(s.boost * 100)}%`
+    const boostPct = Math.round(s.boost * 100)
+    nitroFill.style.width = `${boostPct}%`
     nitro.classList.toggle('ready', s.boostReady)
-    nitroLbl.textContent = s.boostReady ? 'NITRO ▸' : 'NITRO'
+    nitro.classList.toggle('active', s.boostActive)
+    nitro.classList.toggle('charging', !s.boostReady && !s.boostActive)
+    nitroLbl.textContent = s.boostActive ? 'BURN' : s.boostReady ? 'NITRO READY' : `${boostPct}%`
     tcBoost?.classList.toggle('ready', s.boostReady)
+    tcBoost?.classList.toggle('active', s.boostActive)
+    tcBoost?.classList.toggle('charging', !s.boostReady && !s.boostActive)
+    tcBoost?.style.setProperty('--nitro-pct', `${boostPct}%`)
+    const boostMain = tcBoost?.querySelector('.boost-main') as HTMLElement | null
+    const boostSub = tcBoost?.querySelector('.boost-sub') as HTMLElement | null
+    if (boostMain) boostMain.textContent = s.boostActive ? 'BURN' : 'NITRO'
+    if (boostSub) boostSub.textContent = s.boostActive ? 'ACTIVE' : s.boostReady ? 'READY' : `${boostPct}%`
 
-    hud.classList.toggle('show', s.phase !== 'attract')
+    const hudVisible = s.phase === 'running' && !s.paused
+    hud.classList.toggle('show', hudVisible)
+    touchControls?.classList.toggle('hidden', !hudVisible)
+    syncOrientationTip(s)
     pause.classList.toggle('hidden', !s.paused)
     pauseBtn.style.display = s.phase === 'running' ? '' : 'none'
     // render overlays only on phase transition (state changes every frame while running)
@@ -292,6 +405,7 @@ export function createHud(deps: HudDeps): Hud {
       if (s.phase === 'finished') renderFinish()
       start.classList.toggle('hidden', s.phase !== 'attract')
       fin.classList.toggle('hidden', s.phase !== 'finished')
+      unlock.classList.add('hidden')
       // clear any lingering button focus when a run starts (keys are gameplay now)
       if (s.phase === 'running' && document.activeElement instanceof HTMLElement) document.activeElement.blur()
       lastPhase = s.phase

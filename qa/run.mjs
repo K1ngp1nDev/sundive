@@ -223,6 +223,42 @@ const S = (page, fn, ...a) => page.evaluate(({ fn, a }) => window.__SUNDIVE__[fn
   await ctx.close()
 }
 
+// ---- demo unlock: locked levels are clickable in portfolio mode
+{
+  const ctx = await browser.newContext({ viewport: { width: 430, height: 800 } })
+  const { page } = await open(ctx, `${URL}/?qa=1&date=2026-07-04`)
+  await page.evaluate(() => localStorage.setItem('sundive:unlocked', '1'))
+  await page.reload({ waitUntil: 'load' })
+  await page.waitForFunction(() => window.__SUNDIVE__?.ready === true, { timeout: 20000 })
+  const disabled = await page.$eval('.lvl-btn[data-lvl="2"]', (b) => b.hasAttribute('disabled'))
+  await page.click('.lvl-btn[data-lvl="2"]')
+  await page.waitForTimeout(100)
+  const dialogVisible = await page.$eval('.unlock-card', (e) => !e.closest('.overlay')?.classList.contains('hidden'))
+  await page.click('.unlock-card [data-a="unlock"]')
+  await page.waitForTimeout(100)
+  const name = await page.$eval('.level-name', (e) => e.textContent)
+  const stored = await page.evaluate(() => localStorage.getItem('sundive:unlocked'))
+  check('locked level opens demo unlock dialog', !disabled && dialogVisible && /Lv 2/.test(name) && stored === '2', `disabled=${disabled} visible=${dialogVisible} ${name}`)
+  await ctx.close()
+}
+
+// ---- mobile finish: race HUD and touch pads must not overlap the result card
+{
+  const ctx = await browser.newContext({ viewport: { width: 430, height: 932 }, hasTouch: true, isMobile: true })
+  const { page } = await open(ctx, `${URL}/?qa=1&date=2026-07-04&level=1`)
+  await S(page, 'begin'); await S(page, 'autopilot', true); await S(page, 'simSpeed', 250)
+  await page.waitForFunction(() => window.__SUNDIVE__.phase() === 'finished', { timeout: 30000 })
+  await S(page, 'simSpeed', 1); await S(page, 'autopilot', false)
+  const mobileUi = await page.evaluate(() => ({
+    hudShown: document.querySelector('.hud')?.classList.contains('show') ?? false,
+    touchHidden: document.querySelector('.touch-controls')?.classList.contains('hidden') ?? false,
+    retryHint: document.querySelector('.overlay:not(.hidden) .hint-line')?.textContent ?? '',
+    overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  }))
+  check('mobile finish hides race HUD and desktop retry hint', !mobileUi.hudShown && mobileUi.touchHidden && !mobileUi.retryHint.includes('R —') && mobileUi.overflow <= 0, JSON.stringify(mobileUi))
+  await ctx.close()
+}
+
 // ---- daily seed stability
 {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } })

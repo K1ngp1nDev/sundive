@@ -107,7 +107,18 @@ class Game {
     this.attractTimer = 0
     this.aheadCount = null
     this.renderer.clearTrails()
-    setState({ phase, timeMs: 0, boost: 1, boostReady: true, place: null, gapMs: null, newBest: false, won: false, paused: false })
+    setState({
+      phase,
+      timeMs: 0,
+      boost: 1,
+      boostReady: true,
+      boostActive: false,
+      place: null,
+      gapMs: null,
+      newBest: false,
+      won: false,
+      paused: false,
+    })
   }
 
   private markTaught(): void {
@@ -142,7 +153,7 @@ class Game {
   playerBoost(): void {
     const st = getState()
     if (st.phase !== 'running' || !st.boostReady) return
-    setState({ boost: 0, boostReady: false })
+    setState({ boost: 0, boostReady: false, boostActive: true })
     this.player.sim.fireBoost()
     this.renderer.pop()
     this.renderer.addTrauma(0.15)
@@ -306,7 +317,7 @@ class Game {
     const newBest = prevPB === null || ms < prevPB
     if (newBest) savePB(this.pbKey(), ms)
     if (won) unlockLevel(this.level + 1)
-    setState({ phase: 'finished', lastMs: ms, pbMs: newBest ? ms : prevPB, newBest, place, won, timeMs: ms })
+    setState({ phase: 'finished', lastMs: ms, pbMs: newBest ? ms : prevPB, newBest, place, won, timeMs: ms, boostActive: false })
     if (!getState().reducedMotion) { this.timeScale = 0.22; this.slowmoHold = 0.9 }
     hud.banner(won ? 'You win!' : `${place}${place === 2 ? 'nd' : place === 3 ? 'rd' : 'th'} place`, won ? 'gold' : 'ice', 1600)
     this.renderer.flashScreen(won ? 0xffd27a : 0x9fd8e8, 0.16)
@@ -366,7 +377,14 @@ class Game {
     if (st.phase === 'running') {
       const place = this.livePlace()
       const nearest = this.nearestGapMs()
-      setState({ timeMs: this.player.sim.timeMs(), speed: this.player.sim.speed(), holding: this.input.isHeld(), place, gapMs: nearest })
+      setState({
+        timeMs: this.player.sim.timeMs(),
+        speed: this.player.sim.speed(),
+        holding: this.input.isHeld(),
+        place,
+        gapMs: nearest,
+        boostActive: this.player.sim.boosting,
+      })
       // overtake drama
       if (this.aheadCount === null) this.aheadCount = place
       else if (place !== this.aheadCount && st.timeMs - this.overtakeAt > 1400) {
@@ -377,7 +395,7 @@ class Game {
         playCheckpoint(gained)
       }
     } else if (st.phase === 'attract') {
-      setState({ speed: this.player.sim.speed() })
+      setState({ speed: this.player.sim.speed(), boostActive: this.player.sim.boosting })
     }
 
     this.renderAll(rawDt)
@@ -534,6 +552,7 @@ const boot = async (): Promise<void> => {
     level: () => getState().level,
     place: () => getState().place,
     boost: () => getState().boost,
+    boostActive: () => getState().boostActive,
     grounded: () => game.player.sim.state.grounded,
     clr: () => game.player.sim.state.y - game.terrain.heightAt(game.player.sim.state.x),
     hold: (v: boolean | null) => input.force(v),

@@ -13,6 +13,7 @@ export interface AppState {
   speed: number
   boost: number // 0..1 nitro meter
   boostReady: boolean
+  boostActive: boolean
   place: number | null // live/finish rank, 1 = leading
   gapMs: number | null // gap to the rival directly ahead/behind
   pbMs: number | null
@@ -39,6 +40,7 @@ const state: AppState = {
   speed: 0,
   boost: 1,
   boostReady: true,
+  boostActive: false,
   place: null,
   gapMs: null,
   pbMs: null,
