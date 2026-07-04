@@ -128,6 +128,27 @@ const S = (page, fn, ...a) => page.evaluate(({ fn, a }) => window.__SUNDIVE__[fn
   await ctx.close()
 }
 
+// ---- level-select stays clickable after a race (hidden finish card must not eat clicks)
+{
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  const { page } = await open(ctx, `${URL}/?qa=1&date=2026-07-04`)
+  await page.evaluate(() => localStorage.setItem('sundive:unlocked', '3'))
+  await page.reload({ waitUntil: 'load' })
+  await page.waitForFunction(() => window.__SUNDIVE__?.ready === true, { timeout: 20000 })
+  // race level 3 to the finish, then return to the level menu
+  await S(page, 'setLevel', 3, true); await S(page, 'begin'); await S(page, 'autopilot', true); await S(page, 'simSpeed', 300)
+  await page.waitForFunction(() => window.__SUNDIVE__.phase() === 'finished', { timeout: 40000 })
+  await S(page, 'simSpeed', 1); await S(page, 'autopilot', false)
+  await page.click('[data-a="menu"]'); await page.waitForTimeout(150)
+  // click the centre level button (Lv3) — pre-fix the invisible finish card swallowed this
+  let clickErr = ''
+  try { await page.click('.lvl-btn[data-lvl="3"]', { timeout: 4000 }) } catch (e) { clickErr = String(e).slice(0, 80) }
+  await page.waitForTimeout(120)
+  const name = await page.$eval('.level-name', (e) => e.textContent)
+  check('level select clickable after a race (Lv3)', !clickErr && /Lv 3/.test(name), clickErr || name)
+  await ctx.close()
+}
+
 // ---- daily seed stability
 {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } })

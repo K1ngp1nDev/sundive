@@ -155,6 +155,9 @@
 }
 .overlay.hidden { opacity: 0; pointer-events: none; }
 .card { text-align: center; padding: 26px 34px; max-width: min(94vw, 430px); pointer-events: auto; }
+/* a hidden overlay's card must not swallow clicks meant for the overlay behind it
+   (the finish card is centred over the start card's level row — it was eating Lv3) */
+.overlay.hidden .card { pointer-events: none; }
 .kicker { font-size: 11px; letter-spacing: 0.4em; text-transform: uppercase; color: var(--coral); }
 .title {
   margin-top: 8px; font-size: clamp(38px, 9vw, 56px); font-weight: 900; letter-spacing: 0.1em; line-height: 1;
