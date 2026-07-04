@@ -174,6 +174,12 @@ export function createHud(deps: HudDeps): Hud {
   soundBtn.addEventListener('click', () => { unlockAudio(); toggleMute() })
   nitro.addEventListener('click', () => deps.onBoost())
   window.addEventListener('keydown', (e) => { if (e.code === 'KeyM') { unlockAudio(); toggleMute() } })
+  // Drop focus off any HUD button after use, so Space/Enter (jump/boost during a
+  // run) can't re-activate a still-focused button (e.g. "Next level" on repeat).
+  root.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest('button')
+    if (b) b.blur()
+  })
 
   // ---- reactive
   let lastPhase = ''
@@ -197,6 +203,8 @@ export function createHud(deps: HudDeps): Hud {
       if (s.phase === 'finished') renderFinish()
       start.classList.toggle('hidden', s.phase !== 'attract')
       fin.classList.toggle('hidden', s.phase !== 'finished')
+      // clear any lingering button focus when a run starts (keys are gameplay now)
+      if (s.phase === 'running' && document.activeElement instanceof HTMLElement) document.activeElement.blur()
       lastPhase = s.phase
     }
   })

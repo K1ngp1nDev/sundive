@@ -26,8 +26,11 @@ export class Input {
 
     window.addEventListener('keydown', (e) => {
       if (e.repeat) return
-      if (e.code === 'Space') { this.jump(); e.preventDefault() }
-      else if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.code === 'Enter') { this.boost(); e.preventDefault() }
+      // Space/Enter can activate a focused button — ignore them if the focus is
+      // on a control, and never bind Enter to boost (it would re-fire buttons).
+      const onButton = document.activeElement instanceof HTMLElement && document.activeElement.tagName === 'BUTTON'
+      if (e.code === 'Space') { if (!onButton) { this.jump(); e.preventDefault() } }
+      else if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') { this.boost(); e.preventDefault() }
       else if (e.code === 'KeyR') this.onRestart?.()
     })
   }
