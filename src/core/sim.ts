@@ -19,7 +19,7 @@ const DIVE = 78 // extra gravity while holding
 const CARVE = 26 // extra tangential accel while holding on a descent (speed compounds here)
 const SOFT_CAP = 88 // m/s — drag eats the excess above this
 const CAP_DRAG = 1.6
-const MIN_VX = 10 // gentle forward push so you never stall
+const MIN_VX = 30 // brisk baseline cruise so the comet is always moving (nitro is a bonus on top)
 const ROLL_DRAG = 0.0028
 const SLAM_VN = 17 // normal-impact speed that counts as a slam
 const SLAM_MAX_LOSS = 0.35
@@ -30,7 +30,7 @@ const PERFECT_RELEASE_WINDOW = 150 // released within ~1.2 s before takeoff
 const PERFECT_ANGLE_MIN = 0.24 // vy/speed at takeoff
 const PERFECT_ANGLE_MAX = 0.6
 // arcade mechanics
-const JUMP_IMPULSE = 16 // Space — a hop off the ground (apex ~3.8m clears the 1.9m hazard gate)
+const JUMP_IMPULSE = 28 // Space — a big hop (apex ~11.5m, ~3x the old jump; clears hazards with air)
 const BOOST_ACCEL = 62 // Enter/Shift — nitro shove
 const BOOST_CAP = 120 // raised soft cap while boosting
 const BOOST_TIME = 1.15 // seconds of thrust per charge
@@ -202,7 +202,7 @@ export class CometSim {
         s.vy += ty * CARVE * dig * DT
       }
 
-      // rolling drag + never-stall push
+      // rolling drag
       const sp = Math.hypot(s.vx, s.vy)
       if (sp > 0.01) {
         const drag = 1 - ROLL_DRAG
@@ -212,8 +212,6 @@ export class CometSim {
       if (stunned) {
         s.vx *= STUN_DRAG
         s.vy *= STUN_DRAG
-      } else if (s.vx < MIN_VX && s.x < t.length) {
-        s.vx += (MIN_VX - s.vx) * DT * 4
       }
     } else if (this.wasGrounded && !held) {
       // --- takeoff
@@ -245,6 +243,13 @@ export class CometSim {
       groundedNow = false
       this.jumpBuffer = 0
       this.events.push({ type: 'jump', x: s.x, y: s.y })
+    }
+
+    // never-stall forward drive: keep a brisk cruise even airborne / on flats, so the
+    // comet always feels like it's moving and nitro is a *bonus* on top of that, not the
+    // only way forward. Disabled while stunned and after the finish line.
+    if (!stunned && s.finishTick < 0 && s.x < t.length && s.vx < MIN_VX) {
+      s.vx += (MIN_VX - s.vx) * DT * 5
     }
 
     // soft speed cap (raised while boosting)

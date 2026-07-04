@@ -8,7 +8,7 @@ import { loadPB, savePB } from './core/ghost'
 import { Input } from './core/input'
 import { Renderer, RacerRender } from './render/renderer'
 import { createHud } from './ui/hud'
-import { levelDef, unlockLevel } from './core/levels'
+import { levelDef, unlockLevel, LEVELS } from './core/levels'
 import { buildCourse, Course } from './core/course'
 import { Field, makeField, opponentTick, Racer } from './core/racers'
 import {
@@ -30,7 +30,7 @@ const qaMode = params.get('qa') === '1'
 const forceReduce = params.get('reduce') === '1'
 const dateOverride = params.get('date') ?? undefined
 const seedParam = params.get('seed')
-const levelParam = Math.max(1, Math.min(5, Number(params.get('level') || '1')))
+const levelParam = Math.max(1, Math.min(LEVELS.length, Number(params.get('level') || '1')))
 const dailyParam = params.get('mode') !== 'free'
 
 const reducedMotion = forceReduce || window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -120,7 +120,7 @@ class Game {
     else this.reset('running')
   }
   restart(): void { this.reset('running') }
-  nextLevel(): void { this.setLevel(Math.min(5, this.level + 1), this.daily); this.begin() }
+  nextLevel(): void { this.setLevel(Math.min(LEVELS.length, this.level + 1), this.daily); this.begin() }
 
   playerJump(): void {
     if (getState().phase !== 'running') return
