@@ -90,6 +90,29 @@ const S = (page, fn, ...a) => page.evaluate(({ fn, a }) => window.__SUNDIVE__[fn
   await page.waitForTimeout(60)
   check('opponent can be stunned', await S(page, 'opponentStunned'), '')
 
+  // obstacles never trap: a slow, non-jumping comet must clear every obstacle
+  await S(page, 'restart'); await S(page, 'autopilot', false); await S(page, 'hold', false); await S(page, 'simSpeed', 40)
+  let trapped = false, lastX = -999, plateau = 0, lastTk = 0
+  for (let i = 0; i < 120; i++) {
+    await page.waitForTimeout(60)
+    if ((await S(page, 'phase')) === 'finished') break
+    const x = (await S(page, 'pos'))[0], tk = await S(page, 'tick')
+    if (Math.abs(x - lastX) < 3 && tk - lastTk > 200) { plateau += tk - lastTk; if (plateau > 500) { trapped = true; break } }
+    else plateau = 0
+    lastX = x; lastTk = tk
+  }
+  await S(page, 'hold', null); await S(page, 'simSpeed', 1)
+  check('obstacles never trap (slow comet clears all)', !trapped && (await S(page, 'phase')) === 'finished', trapped ? `stuck near x=${Math.round(lastX)}` : 'reached finish')
+
+  // a hop rises clear of the hazard gate (apex clearance > the 1.9m collision gate)
+  await S(page, 'restart'); await S(page, 'autopilot', false); await S(page, 'hold', false); await S(page, 'simSpeed', 1)
+  await page.waitForFunction(() => window.__SUNDIVE__.grounded() && window.__SUNDIVE__.timeMs() > 300, { timeout: 8000 })
+  await S(page, 'jump')
+  let apex = 0
+  for (let i = 0; i < 16; i++) { await page.waitForTimeout(35); apex = Math.max(apex, await S(page, 'clr')) }
+  await S(page, 'hold', null)
+  check('jump clears the hazard gate (apex > 1.9m)', apex > 2.4, `apex clearance ${apex.toFixed(2)}m vs 1.9m gate`)
+
   // finish reachable + placement
   await S(page, 'restart'); await S(page, 'autopilot', true); await S(page, 'simSpeed', 200)
   await page.waitForFunction(() => window.__SUNDIVE__.phase() === 'finished', { timeout: 30000 })

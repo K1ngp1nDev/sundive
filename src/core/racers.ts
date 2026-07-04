@@ -15,6 +15,7 @@ export interface Racer {
   boostCd: number
   jumpedAt: number
   lastHit: number // tick of last obstacle hit (per-racer cooldown)
+  lastObstacleX: number // x of the last obstacle hit — an obstacle can only hit a racer once
   finishOrder: number // 0 = unfinished; else 1-based finish rank
 }
 
@@ -38,6 +39,7 @@ export function makeField(terrain: Terrain, seed: string, level: number): Field 
     boostCd: 0,
     jumpedAt: -999,
     lastHit: -999,
+    lastObstacleX: -Infinity,
     finishOrder: 0,
   }
   const opponents: Racer[] = []
@@ -55,6 +57,7 @@ export function makeField(terrain: Terrain, seed: string, level: number): Field 
       boostCd: 1 + rnd() * 3,
       jumpedAt: -999,
       lastHit: -999,
+      lastObstacleX: -Infinity,
       finishOrder: 0,
     })
   }

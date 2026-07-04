@@ -142,20 +142,20 @@ export class Renderer {
     // hazards — dark vents with a hot rim, planted on the ground
     for (const o of course.obstacles) {
       const g = new Graphics()
-      g.moveTo(o.x - 2.2, o.y)
-      g.lineTo(o.x, o.y + 3.4)
-      g.lineTo(o.x + 2.2, o.y)
+      g.moveTo(o.x - 1.7, o.y)
+      g.lineTo(o.x, o.y + 2.4)
+      g.lineTo(o.x + 1.7, o.y)
       g.closePath()
       g.fill({ color: 0x2a1420 })
-      g.moveTo(o.x - 2.2, o.y)
-      g.lineTo(o.x, o.y + 3.4)
-      g.lineTo(o.x + 2.2, o.y)
+      g.moveTo(o.x - 1.7, o.y)
+      g.lineTo(o.x, o.y + 2.4)
+      g.lineTo(o.x + 1.7, o.y)
       g.stroke({ width: 0.7, color: 0xff5a48, alpha: 0.95 })
       const glow = new Sprite(this.glowTexWarm)
       glow.anchor.set(0.5)
       glow.blendMode = 'add'
-      glow.width = glow.height = 7
-      glow.position.set(o.x, o.y + 2)
+      glow.width = glow.height = 5.5
+      glow.position.set(o.x, o.y + 1.5)
       glow.alpha = 0.5
       this.obstacleLayer.addChild(g)
       this.obstacleLayer.addChild(glow)

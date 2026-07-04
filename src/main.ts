@@ -186,19 +186,23 @@ class Game {
     const p = this.player.sim.state
     if (p.startTick < 0 || p.finishTick >= 0) return
 
-    // obstacles (all racers, per-racer cooldown)
+    // obstacles — each obstacle can hit each racer at most once (no re-hit trap).
+    // A clip is a brief stagger + speed cost you recover from; jump to clear them.
     for (const r of this.field.all) {
       const s = r.sim.state
       if (s.finishTick >= 0) continue
       const gy = this.terrain.heightAt(s.x)
-      const nearGround = s.y - gy < 2.6
-      if (!nearGround || s.tick - r.lastHit < 40) continue
+      const nearGround = s.y - gy < 1.9 // small hazard: any real hop (apex ~3.8m) sails over it
+      if (!nearGround) continue
       for (const o of this.course.obstacles) {
-        if (Math.abs(o.x - s.x) < 2.2) {
+        if (o.x <= r.lastObstacleX) continue // already cleared this one — never re-trigger
+        if (Math.abs(o.x - s.x) < 1.7) {
           r.lastHit = s.tick
-          s.vx *= 0.5
-          s.vy *= 0.5
-          r.sim.stun(0.35)
+          r.lastObstacleX = o.x
+          o.hit = true
+          s.vx *= 0.62 // lose speed, but keep moving so you slide clear
+          s.vy *= 0.62
+          r.sim.stun(0.18) // short wobble, not a decaying dead-stop
           if (r.isPlayer) {
             this.renderer.burst(o.x, o.y + 2, 'slam', 10)
             this.renderer.addTrauma(0.3)
@@ -486,6 +490,7 @@ const boot = async (): Promise<void> => {
     place: () => getState().place,
     boost: () => getState().boost,
     grounded: () => game.player.sim.state.grounded,
+    clr: () => game.player.sim.state.y - game.terrain.heightAt(game.player.sim.state.x),
     hold: (v: boolean | null) => input.force(v),
     jump: () => game.playerJump(),
     fireBoost: () => { setState({ boost: 1, boostReady: true }); game.playerBoost() },
@@ -497,6 +502,9 @@ const boot = async (): Promise<void> => {
     simSpeed: (n: number) => (game.simSpeed = Math.max(0.0001, Math.min(qaMode ? 400 : 1, n))),
     tick: () => game.player.sim.state.tick,
     opponents: () => game.field.opponents.length,
+    obstacles: () => game.course.obstacles.map((o) => o.x),
+    obstaclesHit: () => game.course.obstacles.filter((o) => o.hit).length,
+    playerLastObstacleX: () => game.player.lastObstacleX, // -Infinity until the player itself clips one
     stunNearest: () => {
       const o = game.field.opponents[0]
       if (o) o.sim.stun(2)

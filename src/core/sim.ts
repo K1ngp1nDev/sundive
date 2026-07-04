@@ -30,7 +30,7 @@ const PERFECT_RELEASE_WINDOW = 150 // released within ~1.2 s before takeoff
 const PERFECT_ANGLE_MIN = 0.24 // vy/speed at takeoff
 const PERFECT_ANGLE_MAX = 0.6
 // arcade mechanics
-const JUMP_IMPULSE = 13 // Space — a hop off the ground
+const JUMP_IMPULSE = 16 // Space — a hop off the ground (apex ~3.8m clears the 1.9m hazard gate)
 const BOOST_ACCEL = 62 // Enter/Shift — nitro shove
 const BOOST_CAP = 120 // raised soft cap while boosting
 const BOOST_TIME = 1.15 // seconds of thrust per charge
