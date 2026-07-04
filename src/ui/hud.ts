@@ -103,6 +103,8 @@ export function createHud(deps: HudDeps): Hud {
   let touchControls: HTMLElement | null = null
   let tcBoost: HTMLElement | null = null
   let rotateTip: HTMLElement | null = null
+  let rotateTipManual = false
+  let rotateTipDismissed = false
   if (isTouch) {
     const tc = el('div', 'touch-controls')
     tc.innerHTML = `
@@ -181,17 +183,41 @@ export function createHud(deps: HudDeps): Hud {
       `<span>Best in landscape</span><button class="no-hold" type="button">Rotate</button>`,
     )
     root.appendChild(rotateTip)
-    rotateTip.querySelector('button')?.addEventListener('click', async (e) => {
+    const rotateBtn = rotateTip.querySelector('button')
+    let rotateBusy = false
+    const handleRotate = async (e: Event) => {
       e.preventDefault()
-      try {
-        if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.()
-        const orientation = screen.orientation as ScreenOrientation & { lock?: (orientation: string) => Promise<void> }
-        await orientation.lock?.('landscape')
+      if (rotateBusy) return
+      rotateBusy = true
+      const msg = rotateTip?.querySelector('span')
+      const btn = rotateTip?.querySelector('button')
+      if (rotateTipManual) {
+        rotateTipDismissed = true
         rotateTip?.classList.add('hidden')
-      } catch {
-        const msg = rotateTip?.querySelector('span')
-        if (msg) msg.textContent = 'Turn phone sideways for wide controls'
+        rotateBusy = false
+        return
       }
+      const manualFallback = (): void => {
+        rotateTipManual = true
+        rotateTip?.classList.add('manual')
+        if (msg) msg.textContent = 'Turn phone sideways for wide controls'
+        if (btn) btn.textContent = 'OK'
+      }
+      try {
+        // iOS Safari and in-app browsers generally do not allow web pages to
+        // rotate the screen programmatically. A deterministic instruction is
+        // better UX than a button that silently fails or hangs.
+        manualFallback()
+      } catch {
+        manualFallback()
+      } finally {
+        rotateBusy = false
+      }
+    }
+    rotateBtn?.addEventListener('pointerdown', handleRotate)
+    rotateBtn?.addEventListener('click', (e) => e.preventDefault())
+    rotateBtn?.addEventListener('keydown', (e) => {
+      if (e.code === 'Enter' || e.code === 'Space') void handleRotate(e)
     })
   }
 
@@ -376,7 +402,16 @@ export function createHud(deps: HudDeps): Hud {
   let lastPhase = ''
   const syncOrientationTip = (s = getState()): void => {
     const portrait = window.innerHeight > window.innerWidth
-    const shouldShow = !!rotateTip && s.phase === 'running' && !s.paused && portrait && window.innerWidth <= 760
+    if (!portrait) {
+      rotateTipDismissed = false
+      rotateTipManual = false
+      rotateTip?.classList.remove('manual')
+      const msg = rotateTip?.querySelector('span')
+      const btn = rotateTip?.querySelector('button')
+      if (msg) msg.textContent = 'Best in landscape'
+      if (btn) btn.textContent = 'Rotate'
+    }
+    const shouldShow = !!rotateTip && !rotateTipDismissed && s.phase === 'running' && !s.paused && portrait && window.innerWidth <= 760
     rotateTip?.classList.toggle('hidden', !shouldShow)
   }
   window.addEventListener('resize', () => syncOrientationTip())

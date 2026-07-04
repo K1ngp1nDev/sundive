@@ -261,6 +261,53 @@ const S = (page, fn, ...a) => page.evaluate(({ fn, a }) => window.__SUNDIVE__[fn
   await ctx.close()
 }
 
+// ---- mobile landscape: start/finish overlays must be usable under browser chrome
+{
+  const ctx = await browser.newContext({ viewport: { width: 932, height: 430 }, hasTouch: true, isMobile: true })
+  const { page } = await open(ctx, `${URL}/?qa=1&date=2026-07-04&level=1`)
+  const overlayFit = await page.evaluate(() => {
+    const overlay = document.querySelector('.overlay:not(.hidden)')
+    if (!overlay) return null
+    const before = overlay.scrollTop
+    overlay.scrollTop = 80
+    const style = getComputedStyle(overlay)
+    return {
+      overflowY: style.overflowY,
+      scrollTop: overlay.scrollTop,
+      before,
+      scrollHeight: overlay.scrollHeight,
+      clientHeight: overlay.clientHeight,
+      docOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    }
+  })
+  const overlayOk = !!overlayFit
+    && ['auto', 'scroll'].includes(overlayFit.overflowY)
+    && (overlayFit.scrollHeight <= overlayFit.clientHeight + 1 || overlayFit.scrollTop > 0)
+    && overlayFit.docOverflow <= 0
+  check('mobile landscape overlay fits or scrolls', overlayOk, JSON.stringify(overlayFit))
+  await ctx.close()
+}
+
+// ---- mobile rotate tip: unsupported orientation lock must degrade to a real instruction
+{
+  const ctx = await browser.newContext({ viewport: { width: 430, height: 932 }, hasTouch: true, isMobile: true })
+  const { page } = await open(ctx, `${URL}/?qa=1&date=2026-07-04&level=1`)
+  await S(page, 'begin')
+  await page.waitForSelector('.rotate-tip:not(.hidden)', { timeout: 5000 })
+  await page.click('.rotate-tip button')
+  await page.waitForTimeout(150)
+  const tip = await page.evaluate(() => {
+    const el = document.querySelector('.rotate-tip')
+    return {
+      hidden: el?.classList.contains('hidden') ?? true,
+      text: el?.textContent ?? '',
+      manual: el?.classList.contains('manual') ?? false,
+    }
+  })
+  check('mobile rotate button gives orientation instruction or locks', tip.hidden || tip.manual || /Turn phone sideways/i.test(tip.text), JSON.stringify(tip))
+  await ctx.close()
+}
+
 // ---- daily seed stability
 {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } })

@@ -101,6 +101,15 @@ export class Renderer {
     this.app = app
   }
 
+  private viewportZoomFactor(w: number, h: number): number {
+    const coarse = window.matchMedia?.('(pointer: coarse)').matches || navigator.maxTouchPoints > 0
+    if (h <= 520) return 0.66
+    if (coarse && h > w) return 0.7
+    if (coarse && w > h) return 0.66
+    if (w <= 760) return 0.78
+    return 1
+  }
+
   init(terrain: Terrain, biome: Biome = 'sunset'): void {
     this.terrain = terrain
     this.pal = PALETTES[biome] ?? PALETTES.sunset
@@ -398,7 +407,7 @@ export class Renderer {
     const player = states.find((s) => s.isPlayer) ?? states[0]
 
     // camera on the player
-    const targetZoom = (1.12 - Math.min(0.34, Math.max(0, (player.speed - 14) / 130))) * (this.zoomPop > 0 ? 1 + this.zoomPop * 0.06 : 1)
+    const targetZoom = (1.12 - Math.min(0.34, Math.max(0, (player.speed - 14) / 130))) * this.viewportZoomFactor(w, h) * (this.zoomPop > 0 ? 1 + this.zoomPop * 0.06 : 1)
     this.zoomPop = Math.max(0, this.zoomPop - dt * 3)
     this.zoom += (targetZoom - this.zoom) * Math.min(1, dt * 3.2)
     const scale = PX_PER_M * this.zoom * Math.min(1, w / 900 + 0.35)
@@ -406,7 +415,7 @@ export class Renderer {
     this.camX += (player.x + lookAhead - this.camX) * Math.min(1, dt * 5)
     this.camY += (player.y + 8 - this.camY) * Math.min(1, dt * 4)
     this.world.scale.set(scale, -scale)
-    this.world.position.set(w * 0.34 - this.camX * scale, h * 0.52 + this.camY * scale)
+    this.world.position.set(w * 0.34 - this.camX * scale, (h <= 520 ? h * 0.58 : h * 0.52) + this.camY * scale)
 
     this.trauma = Math.max(0, this.trauma - dt * 1.7)
     const s2 = this.trauma * this.trauma

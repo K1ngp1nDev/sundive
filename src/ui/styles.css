@@ -162,9 +162,13 @@
   position: fixed; inset: 0; z-index: 30; display: grid; place-items: center;
   background: linear-gradient(180deg, rgba(10, 16, 40, 0.42), rgba(10, 16, 40, 0.14) 55%, transparent);
   transition: opacity 300ms ease; padding: 18px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
 }
 .overlay.hidden { opacity: 0; pointer-events: none; }
-.card { text-align: center; padding: 26px 34px; max-width: min(94vw, 430px); pointer-events: auto; }
+.card { text-align: center; padding: 26px 34px; max-width: min(94vw, 430px); pointer-events: auto; margin: auto 0; touch-action: pan-y; }
 /* a hidden overlay's card must not swallow clicks meant for the overlay behind it
    (the finish card is centred over the start card's level row — it was eating Lv3) */
 .overlay.hidden .card { pointer-events: none; }
@@ -309,10 +313,16 @@
   transition: opacity 180ms ease, transform 180ms ease, visibility 180ms ease;
 }
 .rotate-tip.hidden { opacity: 0; visibility: hidden; transform: translate(-50%, 8px); pointer-events: none; }
+.rotate-tip.manual {
+  width: min(92vw, 360px);
+  border-radius: 16px;
+  justify-content: space-between;
+}
 .rotate-tip button {
   border: 0; border-radius: 999px; padding: 7px 11px;
   color: #1c1330; background: linear-gradient(180deg, #ffd27a, #ff9d5c);
   font-size: 11px; font-weight: 900; letter-spacing: 0.06em;
+  touch-action: manipulation;
 }
 /* on touch the round NITRO button + d-pad replace the on-screen bar and hold-bubble */
 @media (pointer: coarse) {
@@ -363,6 +373,33 @@
 }
 
 @media (max-height: 520px) and (orientation: landscape) {
+  .overlay {
+    place-items: start center;
+    padding:
+      max(10px, env(safe-area-inset-top))
+      max(12px, env(safe-area-inset-right))
+      max(12px, env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
+  }
+  .card {
+    margin: 0 auto;
+    padding: 14px 18px;
+    max-width: min(92vw, 560px);
+  }
+  .kicker { font-size: 10px; letter-spacing: 0.32em; }
+  .title { margin-top: 5px; font-size: clamp(30px, 7vw, 44px); }
+  .title.small { font-size: 24px; }
+  .sub { margin-top: 7px; font-size: 12px; }
+  .hint-line { margin-top: 9px; font-size: 11.5px; }
+  .level-row { margin-top: 10px; gap: 7px; max-width: 390px; }
+  .lvl-btn { width: 36px; height: 36px; border-radius: 10px; font-size: 14px; }
+  .level-name { margin-top: 8px; font-size: 11.5px; }
+  .mode-row { margin-top: 10px; gap: 8px; }
+  .big-btn { padding: 10px 20px; font-size: 13px; }
+  .ghost-btn { padding: 10px 16px; font-size: 12px; }
+  .ctrl-grid { margin-top: 10px; gap: 5px 12px; font-size: 12px; max-width: min(86vw, 460px); }
+  .fin-time { margin-top: 7px; font-size: clamp(34px, 8vw, 48px); }
+  .newbest { margin-top: 7px; }
   .hud-corner { font-size: 10px; padding: 6px 9px; }
   .hud-time { padding: 6px 14px; min-width: 128px; }
   .hud-time .t { font-size: 19px; }
