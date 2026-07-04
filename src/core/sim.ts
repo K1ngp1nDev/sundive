@@ -35,6 +35,13 @@ const BOOST_ACCEL = 62 // Enter/Shift — nitro shove
 const BOOST_CAP = 120 // raised soft cap while boosting
 const BOOST_TIME = 1.15 // seconds of thrust per charge
 const STUN_DRAG = 0.955 // per-tick velocity decay while stunned
+// track features
+const PAD_IMPULSE = 42 // trampoline launch velocity (apex ~26 m)
+const PAD_COOLDOWN = 24 // ticks before a pad can fire again
+const PIT_CLEAR = 2.6 // must be this high over a pit to sail across; lower = you fall in
+const PIT_FALL_TIME = 0.3 // seconds dropping into a pit before you respawn
+const PIT_REWIND = 30 // respawn this far before the pit mouth
+const RESPAWN_VX = 22 // forward speed handed back on respawn
 
 export type SimEventType =
   | 'launch'
@@ -46,6 +53,9 @@ export type SimEventType =
   | 'finish'
   | 'jump'
   | 'boost'
+  | 'pad'
+  | 'fall'
+  | 'respawn'
 export interface SimEvent {
   type: SimEventType
   x: number
@@ -66,6 +76,7 @@ export interface SimState {
   finished: boolean
   boostT: number // seconds of boost thrust remaining
   stunT: number // seconds of stun remaining
+  fallingT: number // seconds left dropping into a pit before respawn (0 = not falling)
 }
 
 export interface Telemetry {
@@ -80,6 +91,7 @@ export class CometSim {
   readonly events: SimEvent[] = []
   readonly telemetry: Telemetry = { topSpeed: 0, slams: 0, launches: 0, perfects: 0 }
   private terrain: Terrain
+  private spawnX: number
   private heldTicks = 0
   private releasedAt = -999
   private heldBeforeRelease = 0
@@ -87,9 +99,14 @@ export class CometSim {
   private nextCheckpoint = 0
   private jumpBuffer = 0
   private wasBoosting = false
+  private pits: [number, number][] = []
+  private pads: number[] = []
+  private padCd = 0
+  private respawnX = 0
 
   constructor(terrain: Terrain, spawnX: number) {
     this.terrain = terrain
+    this.spawnX = spawnX
     this.state = {
       x: spawnX,
       y: terrain.heightAt(spawnX) + 0.5,
@@ -102,7 +119,22 @@ export class CometSim {
       finished: false,
       boostT: 0,
       stunT: 0,
+      fallingT: 0,
     }
+  }
+
+  /** Pit intervals [x0,x1] and trampoline x-positions for this course. */
+  setFeatures(pits: [number, number][], pads: number[]): void {
+    this.pits = pits
+    this.pads = pads
+  }
+  private inPit(x: number): [number, number] | null {
+    for (const p of this.pits) if (x >= p[0] && x <= p[1]) return p
+    return null
+  }
+  private nearPad(x: number): boolean {
+    for (const px of this.pads) if (Math.abs(px - x) < 2.6) return true
+    return false
   }
 
   /** Queue a hop; consumed next time the comet is grounded (short input buffer). */
@@ -140,6 +172,7 @@ export class CometSim {
     if (boosting && !this.wasBoosting) this.events.push({ type: 'boost', x: s.x, y: s.y })
     this.wasBoosting = boosting
     if (this.jumpBuffer > 0) this.jumpBuffer--
+    if (this.padCd > 0) this.padCd--
     held = held && !stunned // no diving while stunned
 
     if (held) {
@@ -167,7 +200,42 @@ export class CometSim {
     s.x += s.vx * DT
     s.y += s.vy * DT
 
+    // dropping into a pit: keep falling, then resurrect just before the mouth
+    if (s.fallingT > 0) {
+      s.fallingT -= DT
+      if (s.fallingT <= 0) {
+        const rx = this.respawnX
+        s.x = rx
+        s.y = t.heightAt(rx) + 0.6
+        s.vx = RESPAWN_VX
+        s.vy = 0
+        s.grounded = true
+        this.wasGrounded = true
+        this.heldTicks = 0
+        this.events.push({ type: 'respawn', x: rx, y: s.y })
+      } else {
+        s.grounded = false
+        this.wasGrounded = false
+      }
+      s.tick++
+      return this.events
+    }
+
     const h = t.heightAt(s.x)
+
+    // fall into a pit if crossing the gap without enough air under you
+    const pit = this.inPit(s.x)
+    if (pit && s.y - h < PIT_CLEAR && s.finishTick < 0) {
+      s.fallingT = PIT_FALL_TIME
+      this.respawnX = Math.max(this.spawnX, pit[0] - PIT_REWIND)
+      s.vy = Math.min(s.vy, -18) // plunge into the hole
+      s.grounded = false
+      this.wasGrounded = false
+      this.events.push({ type: 'fall', x: s.x, y: s.y })
+      s.tick++
+      return this.events
+    }
+
     let groundedNow = false
     if (s.y <= h) {
       // --- contact: project velocity onto the slope tangent
@@ -243,6 +311,15 @@ export class CometSim {
       groundedNow = false
       this.jumpBuffer = 0
       this.events.push({ type: 'jump', x: s.x, y: s.y })
+    }
+
+    // trampoline: a big automatic bounce when you cross a pad on the ground
+    if (this.padCd <= 0 && groundedNow && !stunned && this.nearPad(s.x)) {
+      s.vy = PAD_IMPULSE
+      s.y += 0.05
+      groundedNow = false
+      this.padCd = PAD_COOLDOWN
+      this.events.push({ type: 'pad', x: s.x, y: s.y })
     }
 
     // never-stall forward drive: keep a brisk cruise even airborne / on flats, so the

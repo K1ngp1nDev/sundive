@@ -128,6 +128,50 @@ const S = (page, fn, ...a) => page.evaluate(({ fn, a }) => window.__SUNDIVE__[fn
   await ctx.close()
 }
 
+// ---- track features: pits never trap (bots + slow player), trampolines bounce
+{
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  const { page, errors } = await open(ctx, `${URL}/?qa=1&date=2026-07-04&level=6`)
+  // bots must finish a level that has pits (nobody trapped in a hole)
+  await S(page, 'restart'); await S(page, 'autopilot', true); await S(page, 'simSpeed', 250)
+  let botFin = false
+  try { await page.waitForFunction(() => window.__SUNDIVE__.phase() === 'finished', { timeout: 45000 }); botFin = true } catch { /* timed out */ }
+  await S(page, 'simSpeed', 1); await S(page, 'autopilot', false)
+  check('pit level finishes on autopilot (no trap)', botFin, `place=${await S(page, 'place')}`)
+
+  // slow, non-jumping player falls into a pit and respawns (teleports back), never stuck
+  await S(page, 'restart'); await S(page, 'autopilot', false); await S(page, 'hold', false); await S(page, 'simSpeed', 20)
+  let respawned = false, maxX = -999
+  for (let i = 0; i < 300; i++) {
+    await page.waitForTimeout(30)
+    if ((await S(page, 'phase')) === 'finished') break
+    const x = (await S(page, 'pos'))[0]
+    if (x < maxX - 10) { respawned = true; break }
+    maxX = Math.max(maxX, x)
+  }
+  await S(page, 'hold', null); await S(page, 'simSpeed', 1)
+  check('pit respawn works (fall -> resurrect earlier)', respawned, respawned ? 'respawned' : 'no respawn')
+
+  // trampoline: cross a pad and the comet launches high
+  const pads = await S(page, 'pads')
+  if (pads.length) {
+    const pad = pads[0]
+    await S(page, 'restart'); await S(page, 'autopilot', false); await S(page, 'hold', false); await S(page, 'simSpeed', 5)
+    let apex = 0, reached = false
+    for (let i = 0; i < 500; i++) {
+      await page.waitForTimeout(20)
+      if ((await S(page, 'phase')) === 'finished') break
+      const x = (await S(page, 'pos'))[0]
+      if (x > pad - 30 && x < pad + 40) apex = Math.max(apex, await S(page, 'clr'))
+      if (x > pad + 40) { reached = true; break }
+    }
+    await S(page, 'hold', null); await S(page, 'simSpeed', 1)
+    check('trampoline bounces the comet', reached && apex > 6, `apex ${apex.toFixed(1)}m`)
+  }
+  check('no console errors (features level)', errors.length === 0, errors.slice(0, 2).join(' | ') || 'clean')
+  await ctx.close()
+}
+
 // ---- level-select stays clickable after a race (hidden finish card must not eat clicks)
 {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } })

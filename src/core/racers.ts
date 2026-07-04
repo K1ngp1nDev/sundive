@@ -78,16 +78,13 @@ export function opponentTick(r: Racer, terrain: Terrain, course: Course, dt: num
     }
   }
 
-  // hop over an imminent hazard
-  if (s.grounded && s.tick - r.jumpedAt > 30) {
-    const lead = Math.max(6, r.sim.speed() * 0.22)
-    for (const o of course.obstacles) {
-      if (o.x > s.x + 1 && o.x < s.x + lead) {
-        r.sim.requestJump()
-        r.jumpedAt = s.tick
-        break
-      }
-    }
+  // hop over an imminent hazard (vent, rock) or pit
+  if (s.grounded && s.tick - r.jumpedAt > 25) {
+    const lead = Math.max(8, r.sim.speed() * 0.26)
+    let hop = false
+    for (const o of course.obstacles) if (o.x > s.x + 1 && o.x < s.x + lead) { hop = true; break }
+    if (!hop) for (const p of course.pits) if (p.x0 > s.x + 2 && p.x0 < s.x + lead + 8) { hop = true; break }
+    if (hop) { r.sim.requestJump(); r.jumpedAt = s.tick }
   }
   return held
 }

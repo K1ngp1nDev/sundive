@@ -1,14 +1,36 @@
 import { Application, Container, Graphics, Sprite, Texture } from 'pixi.js'
 import type { Terrain } from '../core/terrain'
 import type { Course } from '../core/course'
+import type { Biome } from '../core/levels'
 import { getState } from '../core/state'
 import { radialGlow, skyTexture } from './textures'
 
-// Sunset canyon race renderer: parallax sky/dunes, gold ridge terrain, N
-// colour-coded comets with trails (player is the gold hero), ground hazards,
-// airborne boost motes, and boost/stun juice.
+// Canyon race renderer: parallax sky/dunes, ridge terrain, N colour-coded comets
+// with trails (player is the gold hero), track hazards (vents, rocks, pits,
+// trampolines), airborne boost motes, and boost/stun juice. Palette per biome.
 
 const PX_PER_M = 8
+
+interface Palette {
+  sky: string[]
+  sun: string
+  sunCore: number
+  bg: number
+  dunesFar: number
+  dunesNear: number
+  terrainFill: number
+  terrainDeep: number
+  rimWarm: number
+  rimBright: number
+}
+
+const PALETTES: Record<Biome, Palette> = {
+  sunset: { sky: ['#14265c', '#4a3970', '#c65f6a', '#ff8a5c', '#ffd27a'], sun: '#ffe9b8', sunCore: 0xfff3d0, bg: 0x14265c, dunesFar: 0x2b2454, dunesNear: 0x241c49, terrainFill: 0x1d1738, terrainDeep: 0x120f2c, rimWarm: 0xff8a5c, rimBright: 0xffd27a },
+  aurora: { sky: ['#04122b', '#0d2d4a', '#12564f', '#1f8f6a', '#8ff0b8'], sun: '#c6fff0', sunCore: 0xdafff2, bg: 0x04122b, dunesFar: 0x102a44, dunesNear: 0x0b2036, terrainFill: 0x0d2739, terrainDeep: 0x081726, rimWarm: 0x2fe0a0, rimBright: 0x9ff0c8 },
+  ember: { sky: ['#1a0510', '#3a0d15', '#7a1a12', '#d1451a', '#ffa64c'], sun: '#ffd08a', sunCore: 0xffe0a0, bg: 0x1a0510, dunesFar: 0x2a0d18, dunesNear: 0x1e0812, terrainFill: 0x2a0f14, terrainDeep: 0x18070c, rimWarm: 0xff5a2a, rimBright: 0xffb057 },
+  ice: { sky: ['#0a1c3a', '#274a72', '#5a86b0', '#a9cfe6', '#eaf6ff'], sun: '#eaf6ff', sunCore: 0xffffff, bg: 0x0a1c3a, dunesFar: 0x223f5e, dunesNear: 0x18304c, terrainFill: 0x1d3550, terrainDeep: 0x122238, rimWarm: 0x8fd0ff, rimBright: 0xdff2ff },
+  void: { sky: ['#05030f', '#160a2e', '#331155', '#7a1f8f', '#e04bd0'], sun: '#e79bff', sunCore: 0xf3c0ff, bg: 0x05030f, dunesFar: 0x1a0f33, dunesNear: 0x120826, terrainFill: 0x180f30, terrainDeep: 0x0c0720, rimWarm: 0xb84bff, rimBright: 0xef9bff },
+}
 
 interface Particle { sp: Sprite; vx: number; vy: number; life: number; max: number; drag: number; grav: number }
 interface Ring { g: Graphics; x: number; y: number; max: number; color: number; life: number }
@@ -48,9 +70,11 @@ export class Renderer {
   private parallax: { g: Graphics; factor: number }[] = []
   private terrainChunks = new Map<number, Graphics>()
   private terrainLayer = new Container()
+  private pitLayer = new Container()
   private markerLayer = new Container()
   private obstacleLayer = new Container()
   private bonusLayer = new Container()
+  private pal: Palette = PALETTES.sunset
   private racerLayer = new Container()
   private fxLayer = new Container()
   private shadow = new Graphics()
@@ -77,12 +101,16 @@ export class Renderer {
     this.app = app
   }
 
-  init(terrain: Terrain): void {
+  init(terrain: Terrain, biome: Biome = 'sunset'): void {
     this.terrain = terrain
+    this.pal = PALETTES[biome] ?? PALETTES.sunset
+    const pal = this.pal
     const stage = this.app.stage
     stage.removeChildren()
+    this.parallax = []
     this.terrainChunks.clear()
     this.terrainLayer.removeChildren()
+    this.pitLayer.removeChildren()
     this.markerLayer.removeChildren()
     this.obstacleLayer.removeChildren()
     this.bonusLayer.removeChildren()
@@ -95,24 +123,25 @@ export class Renderer {
 
     const w = this.app.screen.width
     const h = this.app.screen.height
+    this.app.renderer.background.color = pal.bg
 
-    this.sky = new Sprite(skyTexture(w, h))
+    this.sky = new Sprite(skyTexture(w, h, pal.sky))
     this.sky.width = w
     this.sky.height = h
     stage.addChild(this.sky)
 
     this.glowTexGold = radialGlow('#ffd27a')
     this.glowTexWarm = radialGlow('#ff8a5c')
-    this.sun = new Sprite(radialGlow('#ffe9b8', 256))
+    this.sun = new Sprite(radialGlow(pal.sun, 256))
     this.sun.anchor.set(0.5)
     this.sun.blendMode = 'add'
     stage.addChild(this.sun)
-    this.sunCore = new Graphics().circle(0, 0, 46).fill({ color: 0xfff3d0 })
+    this.sunCore = new Graphics().circle(0, 0, 46).fill({ color: pal.sunCore })
     stage.addChild(this.sunCore)
 
     for (const [i, factor] of [0.06, 0.14].entries()) {
       const g = new Graphics()
-      this.drawDunes(g, w, h, factor, i === 0 ? 0x2b2454 : 0x241c49, i === 0 ? 0.9 : 0.95, i === 0 ? 0.62 : 0.72)
+      this.drawDunes(g, w, h, factor, i === 0 ? pal.dunesFar : pal.dunesNear, i === 0 ? 0.9 : 0.95, i === 0 ? 0.62 : 0.72)
       stage.addChild(g)
       this.parallax.push({ g, factor })
     }
@@ -120,6 +149,7 @@ export class Renderer {
     stage.addChild(this.shaker)
     this.shaker.addChild(this.world)
     this.world.addChild(this.terrainLayer)
+    this.world.addChild(this.pitLayer)
     this.world.addChild(this.markerLayer)
     this.world.addChild(this.obstacleLayer)
     this.world.addChild(this.shadow)
@@ -136,29 +166,67 @@ export class Renderer {
   setCourse(course: Course): void {
     this.course = course
     this.obstacleLayer.removeChildren()
+    this.pitLayer.removeChildren()
     this.bonusLayer.removeChildren()
     this.bonusSprites = []
+    const t = this.terrain
 
-    // hazards — dark vents with a hot rim, planted on the ground
-    for (const o of course.obstacles) {
+    // pits — dark chasms cut into the ground, hot mouth edges
+    for (const p of course.pits) {
       const g = new Graphics()
-      g.moveTo(o.x - 1.7, o.y)
-      g.lineTo(o.x, o.y + 2.4)
-      g.lineTo(o.x + 1.7, o.y)
+      const depth = 48
+      const step = 1.5
+      g.moveTo(p.x0, t.heightAt(p.x0) + 0.6)
+      for (let x = p.x0; x <= p.x1; x += step) g.lineTo(x, t.heightAt(x) + 0.6)
+      g.lineTo(p.x1, t.heightAt(p.x1) + 0.6)
+      g.lineTo(p.x1, t.heightAt(p.x1) - depth)
+      g.lineTo(p.x0, t.heightAt(p.x0) - depth)
       g.closePath()
-      g.fill({ color: 0x2a1420 })
-      g.moveTo(o.x - 1.7, o.y)
-      g.lineTo(o.x, o.y + 2.4)
-      g.lineTo(o.x + 1.7, o.y)
-      g.stroke({ width: 0.7, color: 0xff5a48, alpha: 0.95 })
-      const glow = new Sprite(this.glowTexWarm)
-      glow.anchor.set(0.5)
-      glow.blendMode = 'add'
-      glow.width = glow.height = 5.5
-      glow.position.set(o.x, o.y + 1.5)
-      glow.alpha = 0.5
+      g.fill({ color: 0x04030b })
+      // glowing mouth edges
+      g.moveTo(p.x0, t.heightAt(p.x0) + 0.8).lineTo(p.x0, t.heightAt(p.x0) - depth * 0.5).stroke({ width: 0.7, color: this.pal.rimBright, alpha: 0.8 })
+      g.moveTo(p.x1, t.heightAt(p.x1) + 0.8).lineTo(p.x1, t.heightAt(p.x1) - depth * 0.5).stroke({ width: 0.7, color: this.pal.rimBright, alpha: 0.8 })
+      this.pitLayer.addChild(g)
+    }
+
+    // trampolines — springy pads that bounce you high
+    for (const p of course.pads) {
+      const g = new Graphics()
+      g.roundRect(p.x - 2.4, p.y - 0.2, 4.8, 1.1, 0.4).fill({ color: 0x1c6b4c })
+      g.moveTo(p.x - 2.1, p.y + 0.9).quadraticCurveTo(p.x, p.y + 2.8, p.x + 2.1, p.y + 0.9).stroke({ width: 0.8, color: 0x8affc0, alpha: 0.95 })
+      for (const dx of [-1, 0, 1]) g.moveTo(p.x + dx, p.y + 2.0).lineTo(p.x + dx - 0.6, p.y + 3.0).moveTo(p.x + dx, p.y + 2.0).lineTo(p.x + dx + 0.6, p.y + 3.0).stroke({ width: 0.5, color: 0x8affc0, alpha: 0.7 })
+      const glow = new Sprite(radialGlow('#8affc0'))
+      glow.anchor.set(0.5); glow.blendMode = 'add'; glow.width = glow.height = 8; glow.position.set(p.x, p.y + 1.6); glow.alpha = 0.55
       this.obstacleLayer.addChild(g)
       this.obstacleLayer.addChild(glow)
+    }
+
+    // obstacles — small vents (hot) and boulders (grey, taller, jump them)
+    for (const o of course.obstacles) {
+      const g = new Graphics()
+      if (o.kind === 'rock') {
+        g.moveTo(o.x - 2.2, o.y)
+        g.lineTo(o.x - 1.7, o.y + 2.6)
+        g.lineTo(o.x - 0.3, o.y + 3.3)
+        g.lineTo(o.x + 1.4, o.y + 2.8)
+        g.lineTo(o.x + 2.2, o.y + 1.0)
+        g.lineTo(o.x + 1.8, o.y)
+        g.closePath()
+        g.fill({ color: 0x565163 })
+        g.stroke({ width: 0.5, color: 0x8b85a0, alpha: 0.85 })
+        g.circle(o.x - 0.5, o.y + 1.9, 0.55).fill({ color: 0x9c96af, alpha: 0.55 })
+      } else {
+        g.moveTo(o.x - 1.7, o.y)
+        g.lineTo(o.x, o.y + 2.4)
+        g.lineTo(o.x + 1.7, o.y)
+        g.closePath()
+        g.fill({ color: 0x2a1420 })
+        g.moveTo(o.x - 1.7, o.y).lineTo(o.x, o.y + 2.4).lineTo(o.x + 1.7, o.y).stroke({ width: 0.7, color: 0xff5a48, alpha: 0.95 })
+        const glow = new Sprite(this.glowTexWarm)
+        glow.anchor.set(0.5); glow.blendMode = 'add'; glow.width = glow.height = 5.5; glow.position.set(o.x, o.y + 1.5); glow.alpha = 0.5
+        this.obstacleLayer.addChild(glow)
+      }
+      this.obstacleLayer.addChild(g)
     }
 
     // boost motes — floating gold orbs
@@ -248,12 +316,12 @@ export class Renderer {
       for (let x = x0; x <= x0 + CHUNK + step; x += step) g.lineTo(x, this.terrain.heightAt(x))
       g.lineTo(x0 + CHUNK + step, bottom)
       g.closePath()
-      g.fill({ color: 0x1d1738 })
+      g.fill({ color: this.pal.terrainFill })
       g.moveTo(x0, bottom)
       for (let x = x0; x <= x0 + CHUNK + step; x += step) g.lineTo(x, this.terrain.heightAt(x) - 14)
       g.lineTo(x0 + CHUNK + step, bottom)
       g.closePath()
-      g.fill({ color: 0x120f2c, alpha: 0.85 })
+      g.fill({ color: this.pal.terrainDeep, alpha: 0.85 })
       const rim = (dy: number, width: number, color: number, alpha: number) => {
         let first = true
         for (let x = x0; x <= x0 + CHUNK + step; x += step) {
@@ -262,8 +330,8 @@ export class Renderer {
         }
         g.stroke({ width, color, alpha, cap: 'round', join: 'round' })
       }
-      rim(-0.4, 2.6, 0xff8a5c, 0.28)
-      rim(0, 1.1, 0xffd27a, 0.95)
+      rim(-0.4, 2.6, this.pal.rimWarm, 0.28)
+      rim(0, 1.1, this.pal.rimBright, 0.95)
       this.terrainLayer.addChild(g)
       this.terrainChunks.set(ci, g)
     }

@@ -21,6 +21,9 @@ import {
   playObstacle,
   playPerfect,
   playStunHit,
+  playPad,
+  playFall,
+  playRespawn,
   unlockAudio,
   updateAudio,
 } from './core/audio'
@@ -74,10 +77,11 @@ class Game {
     this.seed = daily ? dailySeedString(dateOverride) : (seed ?? randomSeedString())
     const worldSeed = `${this.seed}:L${level}`
     this.terrain = buildTerrain(worldSeed, { length: def.length, ampScale: def.ampScale })
-    this.course = buildCourse(this.terrain, this.seed, level, def.obstacles, def.bonuses)
-    this.renderer.init(this.terrain)
+    this.course = buildCourse(this.terrain, this.seed, level, def)
+    this.renderer.init(this.terrain, def.biome)
     this.renderer.setCourse(this.course)
     this.field = makeField(this.terrain, this.seed, level)
+    this.applyCourseFeatures()
     this.renderer.setRacers(this.field.all.map((r) => ({ color: r.color, isPlayer: r.isPlayer })))
     setState({
       level,
@@ -92,6 +96,7 @@ class Game {
 
   reset(phase: 'attract' | 'running'): void {
     this.field = makeField(this.terrain, this.seed, this.level)
+    this.applyCourseFeatures()
     this.renderer.setRacers(this.field.all.map((r) => ({ color: r.color, isPlayer: r.isPlayer })))
     for (const o of this.course.obstacles) o.hit = false
     for (const b of this.course.bonuses) b.taken = false
@@ -113,6 +118,13 @@ class Game {
   }
 
   get player(): Racer { return this.field.player }
+
+  /** Hand the course's pits + trampolines to every racer's sim (player and bots). */
+  private applyCourseFeatures(): void {
+    const pits = this.course.pits.map((p) => [p.x0, p.x1] as [number, number])
+    const pads = this.course.pads.map((p) => p.x)
+    for (const r of this.field.all) r.sim.setFeatures(pits, pads)
+  }
 
   begin(): void {
     if (getState().phase !== 'attract') return
@@ -160,6 +172,24 @@ class Game {
         case 'boost':
           this.renderer.flashScreen(0xffe9b8, 0.12)
           break
+        case 'pad':
+          this.renderer.burst(ev.x, ev.y, 'boost', 14, 0x8affc0)
+          this.renderer.pop()
+          this.renderer.addTrauma(0.12)
+          playPad()
+          break
+        case 'fall':
+          this.renderer.burst(ev.x, ev.y, 'slam', 10, 0x9a6bff)
+          this.renderer.flashScreen(0x120022, 0.22)
+          playFall()
+          break
+        case 'respawn':
+          this.renderer.burst(ev.x, ev.y, 'perfect', 12, 0x9fd8e8)
+          this.renderer.flashScreen(0x9fd8e8, 0.16)
+          this.renderer.addTrauma(0.15)
+          playRespawn()
+          hud.toast('Respawned', 'bad')
+          break
         case 'slam': {
           const k = ev.intensity ?? 0.5
           this.renderer.burst(ev.x, ev.y, 'slam', Math.round(8 + k * 14))
@@ -187,28 +217,30 @@ class Game {
     if (p.startTick < 0 || p.finishTick >= 0) return
 
     // obstacles — each obstacle can hit each racer at most once (no re-hit trap).
-    // A clip is a brief stagger + speed cost you recover from; jump to clear them.
+    // Vents are a light clip; rocks are a hard hit. Both are recoverable — jump to clear.
     for (const r of this.field.all) {
       const s = r.sim.state
-      if (s.finishTick >= 0) continue
-      const gy = this.terrain.heightAt(s.x)
-      const nearGround = s.y - gy < 1.9 // small hazard: any real hop (apex ~3.8m) sails over it
-      if (!nearGround) continue
+      if (s.finishTick >= 0 || s.fallingT > 0) continue
+      const clearance = s.y - this.terrain.heightAt(s.x)
       for (const o of this.course.obstacles) {
         if (o.x <= r.lastObstacleX) continue // already cleared this one — never re-trigger
-        if (Math.abs(o.x - s.x) < 1.7) {
+        const rock = o.kind === 'rock'
+        if (clearance >= (rock ? 2.6 : 1.9)) continue // hopped high enough to clear it
+        if (Math.abs(o.x - s.x) < (rock ? 2.3 : 1.7)) {
           r.lastHit = s.tick
           r.lastObstacleX = o.x
           o.hit = true
-          s.vx *= 0.62 // lose speed, but keep moving so you slide clear
-          s.vy *= 0.62
-          r.sim.stun(0.18) // short wobble, not a decaying dead-stop
+          const keep = rock ? 0.45 : 0.62 // rocks bleed more speed
+          s.vx *= keep
+          s.vy *= keep
+          r.sim.stun(rock ? 0.3 : 0.18)
           if (r.isPlayer) {
-            this.renderer.burst(o.x, o.y + 2, 'slam', 10)
-            this.renderer.addTrauma(0.3)
-            this.renderer.flashScreen(0xff5a3c, 0.14)
+            this.renderer.burst(o.x, o.y + 2, 'slam', rock ? 16 : 10)
+            this.renderer.addTrauma(rock ? 0.45 : 0.3)
+            this.renderer.flashScreen(0xff5a3c, rock ? 0.2 : 0.14)
+            if (rock && !getState().reducedMotion) this.hitstop = 0.06
             playObstacle()
-            hud.toast('Crash!', 'bad')
+            hud.toast(rock ? 'Rock!' : 'Crash!', 'bad')
           }
           break
         }
@@ -505,6 +537,9 @@ const boot = async (): Promise<void> => {
     obstacles: () => game.course.obstacles.map((o) => o.x),
     obstaclesHit: () => game.course.obstacles.filter((o) => o.hit).length,
     playerLastObstacleX: () => game.player.lastObstacleX, // -Infinity until the player itself clips one
+    pits: () => game.course.pits.map((p) => [p.x0, p.x1]),
+    pads: () => game.course.pads.map((p) => p.x),
+    falling: () => game.player.sim.state.fallingT > 0,
     stunNearest: () => {
       const o = game.field.opponents[0]
       if (o) o.sim.stun(2)

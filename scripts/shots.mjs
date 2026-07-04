@@ -25,46 +25,51 @@ async function hunt(page, pred, budget = 90000) {
 }
 
 const desk = await browser.newContext({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 2 })
-// start / level select — unlock a few levels first so the select looks alive
+// unlock all levels before boot so the 10-level select renders alive
+await desk.addInitScript(() => { try { localStorage.setItem('sundive:unlocked', '10') } catch { /* ignore */ } })
+// start / level select — Aurora biome
 const page = await open(desk, `${URL}/?qa=1&date=2026-07-04&level=3`)
-await page.evaluate(() => localStorage.setItem('sundive:unlocked', '4'))
 await S(page, 'setLevel', 3, true)
 await page.waitForTimeout(1500)
 await page.screenshot({ path: `${OUT}/sundive-start.png` })
 console.log('shot sundive-start')
 
-// race — 3 rivals on screen, a few seconds in
-await S(page, 'begin'); await S(page, 'autopilot', true); await S(page, 'simSpeed', 2)
-await hunt(page, () => window.__SUNDIVE__.timeMs() > 4000 && window.__SUNDIVE__.timeMs() < 9000)
-await S(page, 'simSpeed', 1); await page.waitForTimeout(60)
+// helper: load a level and race a few seconds in
+async function raceInto(level, pred) {
+  await S(page, 'setLevel', level, true)
+  await S(page, 'begin'); await S(page, 'autopilot', true); await S(page, 'simSpeed', 2)
+  await hunt(page, pred)
+  await S(page, 'simSpeed', 1); await page.waitForTimeout(60)
+}
+
+// race — Ember biome (rocks, pits, trampolines on the track)
+await raceInto(6, () => window.__SUNDIVE__.timeMs() > 5000 && window.__SUNDIVE__.timeMs() < 11000)
 await page.screenshot({ path: `${OUT}/sundive-race.png` })
 console.log('shot sundive-race')
 
-// boost — fire nitro on a descent
+// boost — fire nitro on the ember descent
 await S(page, 'fireBoost'); await page.waitForTimeout(90)
 await page.screenshot({ path: `${OUT}/sundive-boost.png` })
 console.log('shot sundive-boost')
 
-// launch — airborne, rising
-await S(page, 'simSpeed', 2)
-await hunt(page, () => { const v = window.__SUNDIVE__.vel(); return !window.__SUNDIVE__.grounded() && v[1] > 5 && window.__SUNDIVE__.speed() > 35 })
-await S(page, 'simSpeed', 1)
+// launch — airborne over an Ice canyon
+await raceInto(8, () => { const v = window.__SUNDIVE__.vel(); return !window.__SUNDIVE__.grounded() && v[1] > 8 && window.__SUNDIVE__.speed() > 40 })
 await page.screenshot({ path: `${OUT}/sundive-launch.png` })
 console.log('shot sundive-launch')
 
-// finish
-await S(page, 'simSpeed', 150)
+// finish — Void biome
+await S(page, 'setLevel', 10, true); await S(page, 'begin'); await S(page, 'autopilot', true); await S(page, 'simSpeed', 150)
 await hunt(page, () => window.__SUNDIVE__.phase() === 'finished')
 await S(page, 'simSpeed', 1); await page.waitForTimeout(700)
 await page.screenshot({ path: `${OUT}/sundive-finish.png` })
 console.log('shot sundive-finish')
 await desk.close()
 
-// mobile
+// mobile — Aurora biome
 const mob = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true })
-const mp = await open(mob, `${URL}/?qa=1&date=2026-07-04&level=2`)
+const mp = await open(mob, `${URL}/?qa=1&date=2026-07-04&level=4`)
 await S(mp, 'begin'); await S(mp, 'autopilot', true); await S(mp, 'simSpeed', 2)
-await hunt(mp, () => window.__SUNDIVE__.speed() > 40)
+await hunt(mp, () => window.__SUNDIVE__.speed() > 45)
 await S(mp, 'simSpeed', 1)
 await mp.screenshot({ path: `${OUT}/sundive-mobile.png` })
 console.log('shot sundive-mobile')
