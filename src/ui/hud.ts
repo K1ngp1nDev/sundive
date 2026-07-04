@@ -5,6 +5,7 @@ import { LEVELS, unlockLevel, unlockedLevels } from '../core/levels'
 export interface HudDeps {
   onRestart: () => void
   onLevel: (level: number, daily: boolean) => void
+  onPreview: (level: number, daily: boolean) => void
   onNext: () => void
   onJump: () => void
   onBoost: () => void
@@ -205,7 +206,7 @@ export function createHud(deps: HudDeps): Hud {
   let pendingUnlockLevel: number | null = null
   const renderStart = (): void => {
     const unlocked = unlockedLevels()
-    selLevel = Math.min(selLevel, unlocked)
+    selLevel = Math.max(1, Math.min(selLevel, LEVELS.length))
     startCard.innerHTML = `
       <div class="kicker">One-button comet racing</div>
       <div class="title">SUNDIVE</div>
@@ -213,11 +214,11 @@ export function createHud(deps: HudDeps): Hud {
       <div class="sub"><b>Hold</b>/<b>D</b> dive · <b>W</b>/<b>Space</b> jump · <b>Shift</b> nitro</div>
       <div class="level-row">${LEVELS.map((l) => {
         const locked = l.n > unlocked
-        return `<button class="lvl-btn ${l.n === selLevel ? 'on' : ''} ${locked ? 'locked' : ''}" type="button" data-lvl="${l.n}" aria-label="${locked ? `Level ${l.n} locked. Demo unlock available.` : `Level ${l.n}`}">${locked ? '🔒' : l.n}</button>`
+        return `<button class="lvl-btn ${l.n === selLevel ? 'on' : ''} ${locked ? 'locked' : ''}" type="button" data-lvl="${l.n}" aria-label="${locked ? `Level ${l.n} locked. Demo preview available.` : `Level ${l.n}`}">${locked ? '🔒' : l.n}</button>`
       }).join('')}</div>
       <div class="level-name">Lv ${selLevel} · ${LEVELS[selLevel - 1].name} · ${LEVELS[selLevel - 1].opponents} rival${LEVELS[selLevel - 1].opponents > 1 ? 's' : ''}</div>
       <div class="mode-row">
-        <button class="big-btn" data-a="go">Race</button>
+        <button class="big-btn" data-a="go">${selLevel > unlocked ? 'Unlock to race' : 'Race'}</button>
         <button class="ghost-btn ${selDaily ? 'on' : ''}" data-a="daily">Daily</button>
         <button class="ghost-btn ${!selDaily ? 'on' : ''}" data-a="free">Free</button>
         <button class="ghost-btn" data-a="help">Controls</button>
@@ -302,11 +303,17 @@ export function createHud(deps: HudDeps): Hud {
   // ---- wiring
   const act = (a: string, card: HTMLElement): void => {
     unlockAudio()
-    if (a === 'go') deps.onLevel(selLevel, selDaily)
+    if (a === 'go') {
+      if (selLevel > unlockedLevels()) {
+        pendingUnlockLevel = selLevel
+        renderUnlock()
+        unlock.classList.remove('hidden')
+      } else deps.onLevel(selLevel, selDaily)
+    }
     else if (a === 'retry') deps.onRestart()
     else if (a === 'next') deps.onNext()
-    else if (a === 'daily') { selDaily = true; renderStart() }
-    else if (a === 'free') { selDaily = false; renderStart() }
+    else if (a === 'daily') { selDaily = true; deps.onPreview(selLevel, selDaily); renderStart() }
+    else if (a === 'free') { selDaily = false; deps.onPreview(selLevel, selDaily); renderStart() }
     else if (a === 'menu') setState({ phase: 'attract', paused: false })
     else if (a === 'resume') deps.onPause()
     else if (a === 'help') help.classList.remove('hidden')
@@ -333,11 +340,15 @@ export function createHud(deps: HudDeps): Hud {
     if (lvl) {
       const level = Number(lvl.dataset.lvl)
       if (lvl.classList.contains('locked')) {
+        selLevel = level
+        deps.onPreview(selLevel, selDaily)
+        renderStart()
         pendingUnlockLevel = level
         renderUnlock()
         unlock.classList.remove('hidden')
       } else {
         selLevel = level
+        deps.onPreview(selLevel, selDaily)
         renderStart()
       }
       return

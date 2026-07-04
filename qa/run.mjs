@@ -234,11 +234,13 @@ const S = (page, fn, ...a) => page.evaluate(({ fn, a }) => window.__SUNDIVE__[fn
   await page.click('.lvl-btn[data-lvl="2"]')
   await page.waitForTimeout(100)
   const dialogVisible = await page.$eval('.unlock-card', (e) => !e.closest('.overlay')?.classList.contains('hidden'))
+  const previewLevel = await S(page, 'level')
+  const raceLabel = await page.$eval('.big-btn[data-a="go"]', (e) => e.textContent)
   await page.click('.unlock-card [data-a="unlock"]')
   await page.waitForTimeout(100)
   const name = await page.$eval('.level-name', (e) => e.textContent)
   const stored = await page.evaluate(() => localStorage.getItem('sundive:unlocked'))
-  check('locked level opens demo unlock dialog', !disabled && dialogVisible && /Lv 2/.test(name) && stored === '2', `disabled=${disabled} visible=${dialogVisible} ${name}`)
+  check('locked level previews then opens demo unlock dialog', !disabled && dialogVisible && previewLevel === 2 && /Unlock to race/.test(raceLabel) && /Lv 2/.test(name) && stored === '2', `disabled=${disabled} visible=${dialogVisible} preview=${previewLevel} ${name}`)
   await ctx.close()
 }
 

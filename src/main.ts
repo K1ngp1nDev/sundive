@@ -512,6 +512,7 @@ const boot = async (): Promise<void> => {
   hud = createHud({
     onRestart: () => game.restart(),
     onLevel: (lvl, daily) => { game.setLevel(lvl, daily); game.begin() },
+    onPreview: (lvl, daily) => { if (getState().phase === 'attract') game.setLevel(lvl, daily) },
     onNext: () => game.nextLevel(),
     onJump: () => { game.begin(); game.playerJump() },
     onBoost: () => { game.begin(); game.playerBoost() },
