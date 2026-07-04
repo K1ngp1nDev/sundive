@@ -2,51 +2,70 @@
 
 **Live demo:** https://sundive.k1ngp1n.com
 
-Race a comet down a canyon of light against a field of rivals. **Hold** to dive
-and build speed, **release** at a crest to soar, **jump** to hop hazards and
-pounce on opponents, and **fire nitro** to blast past them. Five levels, each
-adding another rival and a steeper, hazard-strewn canyon. Instant restart,
-per-level daily seeds, best-time tracking.
+Race a comet down a canyon of light against a field of rivals. The comet
+auto-runs — **hold** (or **D**) to dive and build speed, **release** at a crest
+to soar, **jump** hazards and pounce on opponents, **fire nitro** to blast past.
+Ten levels across five biomes, up to seven rivals, and a track of vents,
+boulders, trampolines and pits. Instant restart, per-level daily seeds,
+best-time tracking.
 
 ![Race](docs/screenshots/sundive-race.png)
 
 ## Controls
 
+The comet always cruises forward; the controls steer and drive it. Keyboard,
+mouse/touch, and an on-screen d-pad (mobile) all work.
+
 | Input | Action |
 |---|---|
-| **Hold** mouse / touch | dive — grip the slope, build speed |
-| **release** | soar — launch off the crest with your momentum |
-| **Space** / JUMP | hop — clear a hazard, or land on a rival to stun it |
-| **Shift** / NITRO | fire nitro — a burst of speed (recharges ~5 s) |
-| **R** / ↺ | instant restart · **M** sound |
+| **Hold** mouse/touch · **D** · **→** | dive — grip the slope, build speed (release at a crest to soar) |
+| **W** · **↑** · **Space** | jump — clear a hazard, or land on a rival to stun it |
+| **Shift** | nitro — a burst of speed (recharges ~5 s) |
+| **S** · **↓** | brake |
+| **A** · **←** | reverse |
+| **Esc** | pause + menu · **R** restart · **M** sound |
+
+On touch: a d-pad on the left (▲ jump · ◀ reverse · ▶ dive · ▼ brake) and a
+NITRO button on the right.
 
 ## The race
 
-- **Rivals.** Each level fields more colour-coded comets (Jade, Rose, Violet…),
-  driven by live bots that dive, nitro and hop hazards. Your placement (`1st of 4`)
-  updates live; beat everyone to **win the level and unlock the next**.
+- **Rivals.** Each level fields more colour-coded comets (Jade, Rose, Violet,
+  Azure, Amber, Lime, Nova), driven by live bots that dive, nitro and hop
+  hazards. Placement (`1st of 7`) updates live; beat everyone to **win the level
+  and unlock the next**.
 - **Nitro.** A meter fills over ~5 s (faster when you grab motes or stun rivals).
-  Fire it for a hard shove — the equalizer when a bot is carving a perfect line.
-- **Jump + stun-land.** Hop over the hot **hazard vents** (a hit staggers you and
-  bleeds speed). Come down *on top of* a rival and you **stun them for 2 s** (they
-  stop, then re-accelerate), bounce off, and refill nitro.
-- **Boost motes.** Golden orbs float above the canyon — catch one mid-launch to
-  top up your nitro.
-- **Perfect launches.** A committed dive released at a clean crest angle gives a
-  speed bonus and a gold burst.
+  Fire it for a hard shove on top of your cruising speed.
+- **Vents & boulders.** Small **vents** are a light clip; **boulders** are a hard
+  hit that bleeds speed and staggers you. Jump to clear either.
+- **Trampolines.** Cross a pad and you bounce sky-high — great for reaching motes
+  or dropping onto a rival.
+- **Pits.** Gaps in the ground. Clear them airborne (jump or soar) or you plunge
+  in and **respawn just before the mouth** — the clock keeps running.
+- **Stun-land.** Come down *on top of* a rival to **stun them for 2 s**, bounce
+  off, and refill nitro.
+- **Boost motes & perfect launches.** Catch floating orbs mid-flight for nitro; a
+  committed dive released at a clean crest angle gives a speed bonus.
 
-## Levels
+## Levels & biomes
 
-| # | Name | Rivals | Canyon |
+Ten levels across five biomes, each steeper and busier than the last:
+
+| # | Name | Biome | Rivals |
 |---|---|---|---|
-| 1 | First Light | 1 | gentle, short — learn the verb |
-| 2 | Long Shadows | 2 | standard |
-| 3 | Deep Canyon | 3 | deeper valleys |
-| 4 | Solar Wind | 4 | steep, hazard-heavy |
-| 5 | Perihelion | 5 | brutal |
+| 1 | First Light | Sunset | 1 |
+| 2 | Long Shadows | Sunset | 2 |
+| 3 | Aurora Run | Aurora | 3 |
+| 4 | Polar Night | Aurora | 4 |
+| 5 | Emberfall | Ember | 5 |
+| 6 | Magma Line | Ember | 6 |
+| 7 | Glacier | Ice | 7 |
+| 8 | Whiteout | Ice | 7 |
+| 9 | Nebula | Void | 7 |
+| 10 | Event Horizon | Void | 7 |
 
-Level 1's rival is deliberately beatable while you learn; higher levels have
-faster, sharper bots. Progress unlocks in `localStorage`.
+Level 1's rival is deliberately beatable while you learn; higher levels add
+rivals, hazards, and faster, sharper bots. Progress unlocks in `localStorage`.
 
 <table>
   <tr>
@@ -62,20 +81,23 @@ faster, sharper bots. Progress unlocks in `localStorage`.
 ## Under the hood
 
 - **Deterministic fixed-timestep physics** (120 Hz): ballistic integration +
-  project-and-slide collision. Dive, carve, launch, slam, **jump**, **nitro** and
-  **stun** are all in one tuning table. A headless telemetry harness (bot runs
-  over many seeds) keeps runs in the ~40–60 s range with a compounding speed curve.
-- **Seeded everything** (`mulberry32`): terrain, rival skill, hazard and mote
-  placement flow from `seed:Ln`. Daily seed = the UTC date, so the world races
-  the same canyon; free-run rolls a fresh one.
+  project-and-slide collision. Dive, carve, launch, slam, jump, nitro, stun,
+  brake/reverse, trampolines and pit respawns are all in one tuning table. A
+  headless telemetry harness (bot runs over many seeds, per level) keeps the run
+  curve at ~40 s → ~100 s across the ten levels.
+- **Seeded everything** (`mulberry32`): terrain, rival skill, and the placement of
+  vents, boulders, pits, pads and motes flow from `seed:Ln`. Daily seed = the UTC
+  date, so everyone races the same canyon; free-run rolls a fresh one.
 - **Live bot rivals** read the terrain exactly like you (dive lookahead + nitro on
-  long descents + hop over hazards) — no scripted paths.
-- **The look**: sunset solar canyon (gold / coral / deep blue), parallax dunes,
-  gold ridge light, additive comet trails (the player is the gold hero), ground
-  shadow for altitude, boost speed-lines, screenshake / hitstop / slow-mo finish,
-  fully procedural WebAudio (wind, nitro, jump, stun, bonus).
-- Static bundle, no backend, no assets. First-run coach + demo-input teach the
-  verb in the first seconds, then never nag again.
+  long descents + hop over hazards and pits) — no scripted paths. Pits and
+  trampolines live in the sim, so bots fall, respawn and bounce too.
+- **Five biomes** (Sunset, Aurora, Ember, Ice, Void) drive the sky gradient, sun,
+  parallax dunes, terrain fill + ridge light, and page background per level.
+- **The look**: additive comet trails (the player is the gold hero), ground shadow
+  for altitude, boost speed-lines, screenshake / hitstop / slow-mo finish, fully
+  procedural WebAudio (wind, nitro, jump, stun, bonus, trampoline, fall, respawn).
+- Static bundle, no backend, no assets. First-run coach teaches the verb in the
+  first seconds, then never nags again.
 
 ## Run locally
 
@@ -96,17 +118,20 @@ npx esbuild scripts/telemetry.ts --bundle --format=esm --outfile=/tmp/st.mjs && 
 
 ```bash
 npm run build
-npm run shots      # regenerates docs/screenshots/*.png (6 shots)
-npm run qa         # Playwright: 18 checks
+npm run shots      # regenerates docs/screenshots/*.png (6 shots, across biomes)
+npm run qa         # Playwright: 29 checks
 ```
 
 QA verifies: loads without console errors, canvas non-blank, level N fields N
-rivals, hold/release changes the trajectory, **jump** lifts off, **nitro** spikes
-speed, an opponent can be stunned, the finish is reachable with a placement, PB
-persists, the daily seed is date-driven, reduced motion doesn't break the sim, no
-horizontal overflow at 360/390/768/1440, and screenshots are ≤ 4000×4000.
+rivals, the Race button starts a run, hold/release changes the trajectory, jump
+lifts off and clears the hazard gate, nitro spikes speed, an opponent can be
+stunned, obstacles never trap, pits finish on autopilot + respawn the player,
+trampolines bounce, brake/reverse/pause work, the finish is reachable with a
+placement, PB persists, the level select is clickable after a race, the daily
+seed is date-driven, reduced motion doesn't break the sim, no horizontal overflow
+at 360/390/768/1440, and screenshots are ≤ 4000×4000.
 
-Query params: `?level=1..5`, `?mode=free`, `?seed=abc`, `?date=YYYY-MM-DD`,
+Query params: `?level=1..10`, `?mode=free`, `?seed=abc`, `?date=YYYY-MM-DD`,
 `?qa=1`, `?reduce=1`.
 
 ## Deploy (static)

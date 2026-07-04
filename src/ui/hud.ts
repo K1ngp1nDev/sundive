@@ -8,8 +8,23 @@ export interface HudDeps {
   onNext: () => void
   onJump: () => void
   onBoost: () => void
+  onPause: () => void
+  setGo: (v: boolean) => void
+  setBrake: (v: boolean) => void
+  setReverse: (v: boolean) => void
   shareText: () => string
 }
+
+// Controls reference, shown in the pause menu and the start-screen help.
+const CONTROLS_HTML = `
+  <div class="ctrl-grid">
+    <span><b>Hold</b> · <b>D</b> · <b>→</b></span><span>dive — accelerate down the slope</span>
+    <span><b>W</b> · <b>↑</b> · <b>Space</b></span><span>jump — hop hazards, pounce on rivals</span>
+    <span><b>Shift</b></span><span>nitro — a burst of speed</span>
+    <span><b>S</b> · <b>↓</b></span><span>brake</span>
+    <span><b>A</b> · <b>←</b></span><span>reverse</span>
+    <span><b>Esc</b></span><span>pause · <b>R</b> restart · <b>M</b> sound</span>
+  </div>`
 
 export interface RacerDot { frac: number; color: number; isPlayer: boolean }
 export interface Label { x: number; y: number; text: string; color: number }
@@ -51,7 +66,8 @@ export function createHud(deps: HudDeps): Hud {
   const btns = el('div', 'hud-btns')
   const restartBtn = el('button', 'icon-btn', '↺')
   const soundBtn = el('button', 'icon-btn', '♪')
-  btns.append(restartBtn, soundBtn)
+  const pauseBtn = el('button', 'icon-btn', '⏸')
+  btns.append(restartBtn, soundBtn, pauseBtn)
 
   // nitro meter (click/tap to fire)
   const nitro = el('button', 'nitro no-hold', `<span class="nitro-fill"></span><span class="nitro-lbl">NITRO</span>`)
@@ -82,13 +98,40 @@ export function createHud(deps: HudDeps): Hud {
   const labelWrap = el('div', 'labels')
   root.appendChild(labelWrap)
 
-  // touch controls
+  // touch controls: a d-pad on the left (WASD), NITRO on the right
+  let tcBoost: HTMLElement | null = null
   if (isTouch) {
     const tc = el('div', 'touch-controls')
-    tc.innerHTML = `<button class="tbtn jump no-hold">JUMP</button><button class="tbtn boost no-hold">NITRO</button>`
+    tc.innerHTML = `
+      <div class="dpad">
+        <button class="tbtn jump no-hold" data-k="jump">▲</button>
+        <button class="tbtn rev no-hold" data-k="rev">◀</button>
+        <button class="tbtn go no-hold" data-k="go">▶</button>
+        <button class="tbtn brake no-hold" data-k="brake">▼</button>
+      </div>
+      <button class="tbtn boost big no-hold">NITRO</button>`
     root.appendChild(tc)
-    ;(tc.querySelector('.jump') as HTMLElement).addEventListener('pointerdown', (e) => { e.preventDefault(); deps.onJump() })
-    ;(tc.querySelector('.boost') as HTMLElement).addEventListener('pointerdown', (e) => { e.preventDefault(); deps.onBoost() })
+    const tap = (sel: string, fn: () => void) => {
+      const b = tc.querySelector(sel) as HTMLElement
+      b.addEventListener('pointerdown', (e) => { e.preventDefault(); fn() })
+    }
+    const hold = (sel: string, set: (v: boolean) => void) => {
+      const b = tc.querySelector(sel) as HTMLElement
+      const on = (e: Event) => { e.preventDefault(); b.classList.add('down'); set(true) }
+      const off = () => { b.classList.remove('down'); set(false) }
+      b.addEventListener('pointerdown', on)
+      b.addEventListener('pointerup', off)
+      b.addEventListener('pointerleave', off)
+      b.addEventListener('pointercancel', off)
+    }
+    tap('.jump', () => deps.onJump())
+    tap('.boost', () => deps.onBoost())
+    tcBoost = tc.querySelector('.boost') as HTMLElement
+    hold('.go', deps.setGo)
+    hold('.brake', deps.setBrake)
+    hold('.rev', deps.setReverse)
+    // safety: releasing anywhere clears held pads
+    window.addEventListener('pointerup', () => { deps.setGo(false); deps.setBrake(false); deps.setReverse(false); tc.querySelectorAll('.down').forEach((e) => e.classList.remove('down')) })
   }
 
   // ---- start overlay
@@ -106,7 +149,7 @@ export function createHud(deps: HudDeps): Hud {
       <div class="kicker">One-button comet racing</div>
       <div class="title">SUNDIVE</div>
       <div class="sub goal-line">Outrace the rivals to the finish.</div>
-      <div class="sub"><b>Hold</b> dive · <b>Space</b> jump · <b>Shift</b> nitro</div>
+      <div class="sub"><b>Hold</b>/<b>D</b> dive · <b>W</b>/<b>Space</b> jump · <b>Shift</b> nitro</div>
       <div class="level-row">${LEVELS.map((l) => {
         const locked = l.n > unlocked
         return `<button class="lvl-btn ${l.n === selLevel ? 'on' : ''} ${locked ? 'locked' : ''}" data-lvl="${l.n}" ${locked ? 'disabled' : ''}>${locked ? '🔒' : l.n}</button>`
@@ -116,10 +159,38 @@ export function createHud(deps: HudDeps): Hud {
         <button class="big-btn" data-a="go">Race</button>
         <button class="ghost-btn ${selDaily ? 'on' : ''}" data-a="daily">Daily</button>
         <button class="ghost-btn ${!selDaily ? 'on' : ''}" data-a="free">Free</button>
+        <button class="ghost-btn" data-a="help">Controls</button>
       </div>
       <div class="hint-line">hold anywhere to dive — the comet is already falling</div>`
   }
   renderStart()
+
+  // ---- pause overlay
+  const pause = el('div', 'overlay hidden')
+  const pauseCard = el('div', 'panel card')
+  pause.appendChild(pauseCard)
+  root.appendChild(pause)
+  pauseCard.innerHTML = `
+    <div class="kicker">Paused</div>
+    <div class="title small">SUNDIVE</div>
+    ${CONTROLS_HTML}
+    <div class="mode-row">
+      <button class="big-btn" data-a="resume">Resume</button>
+      <button class="ghost-btn" data-a="retry">Restart</button>
+      <button class="ghost-btn" data-a="menu">Levels</button>
+    </div>`
+
+  // ---- controls help overlay (from the start screen)
+  const help = el('div', 'overlay hidden')
+  const helpCard = el('div', 'panel card')
+  help.appendChild(helpCard)
+  root.appendChild(help)
+  helpCard.innerHTML = `
+    <div class="kicker">Controls</div>
+    <div class="title small">How to play</div>
+    <div class="sub goal-line">The comet auto-runs down the canyon — steer it, and beat the rivals.</div>
+    ${CONTROLS_HTML}
+    <div class="mode-row"><button class="big-btn" data-a="closehelp">Got it</button></div>`
 
   // ---- finish overlay
   const fin = el('div', 'overlay hidden')
@@ -155,7 +226,10 @@ export function createHud(deps: HudDeps): Hud {
     else if (a === 'next') deps.onNext()
     else if (a === 'daily') { selDaily = true; renderStart() }
     else if (a === 'free') { selDaily = false; renderStart() }
-    else if (a === 'menu') setState({ phase: 'attract' })
+    else if (a === 'menu') setState({ phase: 'attract', paused: false })
+    else if (a === 'resume') deps.onPause()
+    else if (a === 'help') help.classList.remove('hidden')
+    else if (a === 'closehelp') help.classList.add('hidden')
     else if (a === 'share') {
       const text = deps.shareText()
       const note = card.querySelector('.share-note') as HTMLElement | null
@@ -170,8 +244,11 @@ export function createHud(deps: HudDeps): Hud {
     if (a) act(a, startCard)
   })
   finCard.addEventListener('click', (e) => { const a = (e.target as HTMLElement).closest('button')?.dataset.a; if (a) act(a, finCard) })
+  pauseCard.addEventListener('click', (e) => { const a = (e.target as HTMLElement).closest('button')?.dataset.a; if (a) act(a, pauseCard) })
+  helpCard.addEventListener('click', (e) => { const a = (e.target as HTMLElement).closest('button')?.dataset.a; if (a) act(a, helpCard) })
   restartBtn.addEventListener('click', () => deps.onRestart())
   soundBtn.addEventListener('click', () => { unlockAudio(); toggleMute() })
+  pauseBtn.addEventListener('click', () => deps.onPause())
   nitro.addEventListener('click', () => deps.onBoost())
   window.addEventListener('keydown', (e) => { if (e.code === 'KeyM') { unlockAudio(); toggleMute() } })
   // Drop focus off any HUD button after use, so Space/Enter (jump/boost during a
@@ -195,8 +272,11 @@ export function createHud(deps: HudDeps): Hud {
     nitroFill.style.width = `${Math.round(s.boost * 100)}%`
     nitro.classList.toggle('ready', s.boostReady)
     nitroLbl.textContent = s.boostReady ? 'NITRO ▸' : 'NITRO'
+    tcBoost?.classList.toggle('ready', s.boostReady)
 
     hud.classList.toggle('show', s.phase !== 'attract')
+    pause.classList.toggle('hidden', !s.paused)
+    pauseBtn.style.display = s.phase === 'running' ? '' : 'none'
     // render overlays only on phase transition (state changes every frame while running)
     if (s.phase !== lastPhase) {
       if (s.phase === 'attract') renderStart()

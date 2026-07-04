@@ -107,7 +107,7 @@ class Game {
     this.attractTimer = 0
     this.aheadCount = null
     this.renderer.clearTrails()
-    setState({ phase, timeMs: 0, boost: 1, boostReady: true, place: null, gapMs: null, newBest: false, won: false })
+    setState({ phase, timeMs: 0, boost: 1, boostReady: true, place: null, gapMs: null, newBest: false, won: false, paused: false })
   }
 
   private markTaught(): void {
@@ -315,8 +315,15 @@ class Game {
     hud.showFinish()
   }
 
+  togglePause(): void {
+    const st = getState()
+    if (st.paused) setState({ paused: false })
+    else if (st.phase === 'running') setState({ paused: true })
+  }
+
   frame(rawDt: number): void {
     const st = getState()
+    if (st.paused) { this.renderAll(rawDt); return } // frozen, but keep the scene painted
     if (this.hitstop > 0) { this.hitstop -= rawDt; this.timeScale = 0.05 }
     else if (this.slowmoHold > 0) this.slowmoHold -= rawDt
     else this.timeScale += (1 - this.timeScale) * Math.min(1, rawDt * 5)
@@ -339,6 +346,7 @@ class Game {
       if (this.autopilot) held = opponentTick(this.player, this.terrain, this.course, DT)
       else if (st.phase === 'attract') { held = opponentTick(this.player, this.terrain, this.course, DT); this.attractHeld = held }
       else held = this.input.isHeld()
+      this.player.sim.control(this.autopilot ? false : this.input.braking(), this.autopilot ? false : this.input.reversing())
       const events = this.player.sim.step(held)
       if (st.phase !== 'attract') this.onPlayerEvents(events)
 
@@ -487,8 +495,12 @@ const boot = async (): Promise<void> => {
     onRestart: () => game.restart(),
     onLevel: (lvl, daily) => { game.setLevel(lvl, daily); game.begin() },
     onNext: () => game.nextLevel(),
-    onJump: () => game.playerJump(),
-    onBoost: () => game.playerBoost(),
+    onJump: () => { game.begin(); game.playerJump() },
+    onBoost: () => { game.begin(); game.playerBoost() },
+    onPause: () => game.togglePause(),
+    setGo: (v) => input.setTouchGo(v),
+    setBrake: (v) => input.setTouchBrake(v),
+    setReverse: (v) => input.setTouchReverse(v),
     shareText: () => game.shareText(),
   })
 
@@ -496,6 +508,7 @@ const boot = async (): Promise<void> => {
   input.onRestart = () => game.restart()
   input.onJump = () => { game.begin(); game.playerJump() }
   input.onBoost = () => { game.begin(); game.playerBoost() }
+  input.onPause = () => game.togglePause()
 
   game.setLevel(levelParam, dailyParam, seedParam ?? undefined)
 
@@ -540,6 +553,7 @@ const boot = async (): Promise<void> => {
     pits: () => game.course.pits.map((p) => [p.x0, p.x1]),
     pads: () => game.course.pads.map((p) => p.x),
     falling: () => game.player.sim.state.fallingT > 0,
+    driving: () => ({ held: input.isHeld(), brake: input.braking(), reverse: input.reversing() }),
     stunNearest: () => {
       const o = game.field.opponents[0]
       if (o) o.sim.stun(2)

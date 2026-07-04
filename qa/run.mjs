@@ -172,6 +172,26 @@ const S = (page, fn, ...a) => page.evaluate(({ fn, a }) => window.__SUNDIVE__[fn
   await ctx.close()
 }
 
+// ---- controls: brake / reverse / pause (hybrid WASD scheme)
+{
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } })
+  const { page } = await open(ctx, `${URL}/?qa=1&date=2026-07-04&level=3`)
+  await S(page, 'begin'); await S(page, 'restart'); await S(page, 'simSpeed', 8)
+  await page.waitForTimeout(250)
+  const cruise = (await S(page, 'vel'))[0]
+  await page.keyboard.down('KeyS'); await page.waitForTimeout(450); const braked = (await S(page, 'vel'))[0]; await page.keyboard.up('KeyS')
+  check('brake (S) stops the comet', cruise > 10 && braked < cruise * 0.4, `${cruise.toFixed(0)} -> ${braked.toFixed(0)}`)
+  await page.keyboard.down('KeyA'); await page.waitForTimeout(500); const rev = (await S(page, 'vel'))[0]; await page.keyboard.up('KeyA')
+  check('reverse (A) drives backward', rev < -5, `vx ${rev.toFixed(0)}`)
+  await S(page, 'simSpeed', 1); await page.waitForTimeout(100)
+  await page.keyboard.press('Escape'); await page.waitForTimeout(120)
+  const p1 = (await S(page, 'state')).paused, tk1 = await S(page, 'tick')
+  await page.waitForTimeout(300); const tk2 = await S(page, 'tick')
+  await page.keyboard.press('Escape'); await page.waitForTimeout(60); const resumed = !(await S(page, 'state')).paused
+  check('pause (Esc) freezes + resumes', p1 && tk1 === tk2 && resumed, `paused=${p1} frozen=${tk1 === tk2} resumed=${resumed}`)
+  await ctx.close()
+}
+
 // ---- level-select stays clickable after a race (hidden finish card must not eat clicks)
 {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } })
@@ -183,7 +203,7 @@ const S = (page, fn, ...a) => page.evaluate(({ fn, a }) => window.__SUNDIVE__[fn
   await S(page, 'setLevel', 3, true); await S(page, 'begin'); await S(page, 'autopilot', true); await S(page, 'simSpeed', 300)
   await page.waitForFunction(() => window.__SUNDIVE__.phase() === 'finished', { timeout: 40000 })
   await S(page, 'simSpeed', 1); await S(page, 'autopilot', false)
-  await page.click('[data-a="menu"]'); await page.waitForTimeout(150)
+  await page.click('.overlay:not(.hidden) [data-a="menu"]'); await page.waitForTimeout(150)
   // click the centre level button (Lv3) — pre-fix the invisible finish card swallowed this
   let clickErr = ''
   try { await page.click('.lvl-btn[data-lvl="3"]', { timeout: 4000 }) } catch (e) { clickErr = String(e).slice(0, 80) }

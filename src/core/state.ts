@@ -22,6 +22,7 @@ export interface AppState {
   holding: boolean
   muted: boolean
   reducedMotion: boolean
+  paused: boolean
   ready: boolean
 }
 
@@ -47,6 +48,7 @@ const state: AppState = {
   holding: false,
   muted: false,
   reducedMotion: false,
+  paused: false,
   ready: false,
 }
 

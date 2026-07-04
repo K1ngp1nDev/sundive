@@ -42,6 +42,10 @@ const PIT_CLEAR = 2.6 // must be this high over a pit to sail across; lower = yo
 const PIT_FALL_TIME = 0.3 // seconds dropping into a pit before you respawn
 const PIT_REWIND = 30 // respawn this far before the pit mouth
 const RESPAWN_VX = 22 // forward speed handed back on respawn
+// active driving (hybrid controls: comet auto-cruises, these override)
+const BRAKE_DRAG = 0.86 // per-tick speed multiplier while braking (S / down)
+const REVERSE_ACCEL = 46 // backward push while reversing (A / left)
+const REVERSE_CAP = -34 // top reverse speed
 
 export type SimEventType =
   | 'launch'
@@ -103,6 +107,8 @@ export class CometSim {
   private pads: number[] = []
   private padCd = 0
   private respawnX = 0
+  private brakeInput = false
+  private reverseInput = false
 
   constructor(terrain: Terrain, spawnX: number) {
     this.terrain = terrain
@@ -127,6 +133,11 @@ export class CometSim {
   setFeatures(pits: [number, number][], pads: number[]): void {
     this.pits = pits
     this.pads = pads
+  }
+  /** Active-driving overrides for this tick (S = brake, A = reverse). */
+  control(brake: boolean, reverse: boolean): void {
+    this.brakeInput = brake
+    this.reverseInput = reverse
   }
   private inPit(x: number): [number, number] | null {
     for (const p of this.pits) if (x >= p[0] && x <= p[1]) return p
@@ -173,7 +184,7 @@ export class CometSim {
     this.wasBoosting = boosting
     if (this.jumpBuffer > 0) this.jumpBuffer--
     if (this.padCd > 0) this.padCd--
-    held = held && !stunned // no diving while stunned
+    held = held && !stunned && !this.brakeInput && !this.reverseInput // brake/reverse override dive
 
     if (held) {
       if (this.heldTicks === 0) this.heldBeforeRelease = 0
@@ -322,10 +333,19 @@ export class CometSim {
       this.events.push({ type: 'pad', x: s.x, y: s.y })
     }
 
+    // active driving: brake to a stop (S), or push backward (A)
+    if (this.brakeInput && !stunned) {
+      s.vx *= BRAKE_DRAG
+      if (groundedNow) s.vy *= BRAKE_DRAG
+      if (Math.abs(s.vx) < 0.4) s.vx = 0
+    } else if (this.reverseInput && !stunned) {
+      s.vx = Math.max(REVERSE_CAP, s.vx - REVERSE_ACCEL * DT)
+    }
+
     // never-stall forward drive: keep a brisk cruise even airborne / on flats, so the
     // comet always feels like it's moving and nitro is a *bonus* on top of that, not the
-    // only way forward. Disabled while stunned and after the finish line.
-    if (!stunned && s.finishTick < 0 && s.x < t.length && s.vx < MIN_VX) {
+    // only way forward. Disabled while stunned, braking/reversing, and after the finish.
+    if (!stunned && !this.brakeInput && !this.reverseInput && s.finishTick < 0 && s.x < t.length && s.vx < MIN_VX) {
       s.vx += (MIN_VX - s.vx) * DT * 5
     }
 
