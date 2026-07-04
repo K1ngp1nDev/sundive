@@ -9,8 +9,16 @@ export interface HudDeps {
 
 export interface Hud {
   toast: (text: string, cls?: string) => void
+  banner: (text: string, cls?: string, ms?: number) => void
   showFinish: () => void
   hideOverlays: () => void
+  /** Big pulsing input demo — mirrors the (bot or player) hold state. */
+  setDemoInput: (visible: boolean, held: boolean) => void
+  /** First-run coach line ("HOLD — dive!"); null hides. */
+  setCoach: (text: string | null) => void
+  /** Comet labels in screen px; null hides. */
+  setLabels: (you: { x: number; y: number } | null, ghost: { x: number; y: number } | null) => void
+  setGhostTime: (ms: number | null) => void
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, html?: string): HTMLElementTagNameMap[K] {
@@ -28,6 +36,16 @@ export function createHud(deps: HudDeps): Hud {
   const time = el('div', 'panel hud-time', `<div class="t">0:00.00</div><div class="d"></div>`)
   const timeT = time.querySelector('.t') as HTMLElement
   const timeD = time.querySelector('.d') as HTMLElement
+
+  // course progress strip: you + ghost racing toward the finish flag
+  const strip = el('div', 'panel course')
+  strip.innerHTML = `
+    <div class="course-line"></div>
+    <div class="course-dot ghost" title="ghost"></div>
+    <div class="course-dot you" title="you"></div>
+    <div class="course-flag">🏁</div>`
+  const dotYou = strip.querySelector('.you') as HTMLElement
+  const dotGhost = strip.querySelector('.ghost') as HTMLElement
   const corner = el('div', 'panel hud-corner')
   const btns = el('div', 'hud-btns')
   const restartBtn = el('button', 'icon-btn', '↺')
@@ -36,8 +54,29 @@ export function createHud(deps: HudDeps): Hud {
   soundBtn.title = 'Sound (M)'
   btns.append(restartBtn, soundBtn)
   const speed = el('div', 'panel hud-speed', `<b>0</b> m/s`)
-  hud.append(time, corner, btns, speed)
+  hud.append(time, strip, corner, btns, speed)
   root.appendChild(hud)
+
+  // demo input bubble (attract + first run): shows HOLD/RELEASE cause->effect
+  const demo = el('div', 'demo-input hidden')
+  demo.innerHTML = `<span class="ring"></span><span class="lbl">HOLD</span>`
+  const demoLbl = demo.querySelector('.lbl') as HTMLElement
+  root.appendChild(demo)
+
+  // coach line (first run)
+  const coach = el('div', 'coach hidden')
+  root.appendChild(coach)
+
+  // big race banner (goal at start, overtakes, verdicts)
+  const banner = el('div', 'race-banner')
+  root.appendChild(banner)
+  let bannerTimer: number | null = null
+
+  // comet labels
+  const labYou = el('div', 'comet-label you-label hidden', 'YOU')
+  const labGhost = el('div', 'comet-label ghost-label hidden', 'GHOST')
+  root.appendChild(labYou)
+  root.appendChild(labGhost)
 
   // --- toasts
   const toastWrap = el('div', 'toast-wrap')
@@ -51,15 +90,18 @@ export function createHud(deps: HudDeps): Hud {
   const start = el('div', 'overlay')
   const startCard = el('div', 'panel card')
   startCard.innerHTML = `
-    <div class="kicker">One button · race the ghost</div>
+    <div class="kicker">One button · one race</div>
     <div class="title">SUNDIVE</div>
-    <div class="sub"><b>Hold</b> to dive &nbsp;·&nbsp; <b>release</b> to soar</div>
+    <div class="sub goal-line">Race the ghost to the finish line.</div>
+    <div class="sub"><b>Hold</b> to dive down slopes &nbsp;·&nbsp; <b>release</b> at a crest to fly</div>
+    <div class="sub ghost-time-line"></div>
     <div class="mode-row">
       <button class="big-btn" data-a="go">Ride</button>
       <button class="ghost-btn" data-a="daily">Daily</button>
       <button class="ghost-btn" data-a="free">Free run</button>
     </div>
     <div class="hint-line">press and hold anywhere — the comet is already falling</div>`
+  const ghostTimeLine = startCard.querySelector('.ghost-time-line') as HTMLElement
   start.appendChild(startCard)
   root.appendChild(start)
 
@@ -72,14 +114,23 @@ export function createHud(deps: HudDeps): Hud {
   const renderFinish = (): void => {
     const s = getState()
     const vsGhost = s.deltaMs
-    const deltaCls = vsGhost !== null && vsGhost <= 0 ? 'ahead' : 'behind'
+    const won = vsGhost !== null && vsGhost <= 0
+    const rival = s.ghostSource === 'pb' ? 'your best self' : 'the ghost'
+    const verdict =
+      vsGhost === null
+        ? 'Finish'
+        : won
+          ? `You beat ${rival}`
+          : `${s.ghostSource === 'pb' ? 'Your best self won' : 'The ghost won'}`
+    const deltaCls = won ? 'ahead' : 'behind'
     finCard.innerHTML = `
       <div class="kicker">${s.mode === 'daily' ? `Daily · ${s.seed}` : `Canyon · ${s.seed}`}</div>
+      <div class="fin-verdict ${deltaCls}">${verdict}</div>
       <div class="fin-time">${s.lastMs !== null ? fmtTime(s.lastMs) : '—'}</div>
       ${vsGhost !== null ? `<div class="fin-delta ${deltaCls}">${fmtDelta(vsGhost)} vs ${s.ghostSource === 'pb' ? 'your best' : 'the ghost'}</div>` : ''}
-      ${s.newBest ? '<div class="newbest">New best</div>' : s.pbMs !== null ? `<div class="fin-best">best ${fmtTime(s.pbMs)}</div>` : ''}
+      ${s.newBest ? '<div class="newbest">New best — your ghost just got faster</div>' : s.pbMs !== null ? `<div class="fin-best">best ${fmtTime(s.pbMs)}</div>` : ''}
       <div class="mode-row">
-        <button class="big-btn" data-a="retry">Ride again</button>
+        <button class="big-btn ${won ? '' : 'pulse'}" data-a="retry">${won ? 'Ride again' : 'One more try'}</button>
         <button class="ghost-btn" data-a="share">Share</button>
         <button class="ghost-btn" data-a="${getState().mode === 'daily' ? 'free' : 'daily'}">${getState().mode === 'daily' ? 'Free run' : 'Daily'}</button>
       </div>
@@ -136,6 +187,8 @@ export function createHud(deps: HudDeps): Hud {
     corner.innerHTML = `${s.mode === 'daily' ? 'DAILY' : 'FREE'} · <b>${s.seed}</b>${s.pbMs !== null ? `<br/>best <b>${fmtTime(s.pbMs)}</b>` : ''}`
     ;(speed.querySelector('b') as HTMLElement).textContent = String(Math.round(s.speed))
     soundBtn.classList.toggle('active', !s.muted)
+    dotYou.style.left = `${(s.progress * 100).toFixed(2)}%`
+    dotGhost.style.left = `${(s.ghostProgress * 100).toFixed(2)}%`
 
     hud.classList.toggle('show', s.phase !== 'attract')
     start.classList.toggle('hidden', s.phase !== 'attract')
@@ -160,6 +213,12 @@ export function createHud(deps: HudDeps): Hud {
       while (toastWrap.children.length > 2) toastWrap.firstChild?.remove()
       setTimeout(() => t.remove(), 950)
     },
+    banner: (text, cls = '', ms = 2000) => {
+      banner.textContent = text
+      banner.className = `race-banner show ${cls}`
+      if (bannerTimer !== null) clearTimeout(bannerTimer)
+      bannerTimer = window.setTimeout(() => banner.classList.remove('show'), ms)
+    },
     showFinish: () => {
       renderFinish()
       setState({ ...getState() })
@@ -167,6 +226,30 @@ export function createHud(deps: HudDeps): Hud {
     hideOverlays: () => {
       start.classList.add('hidden')
       fin.classList.add('hidden')
+    },
+    setDemoInput: (visible, held) => {
+      demo.classList.toggle('hidden', !visible)
+      demo.classList.toggle('held', held)
+      demoLbl.textContent = held ? 'HOLD — dive' : 'RELEASE — fly'
+    },
+    setCoach: (text) => {
+      if (text) {
+        if (coach.textContent !== text) coach.textContent = text
+        coach.classList.remove('hidden')
+      } else coach.classList.add('hidden')
+    },
+    setLabels: (you, ghost) => {
+      if (you) {
+        labYou.classList.remove('hidden')
+        labYou.style.transform = `translate(${Math.round(you.x - 20)}px, ${Math.round(you.y - 44)}px)`
+      } else labYou.classList.add('hidden')
+      if (ghost) {
+        labGhost.classList.remove('hidden')
+        labGhost.style.transform = `translate(${Math.round(ghost.x - 28)}px, ${Math.round(ghost.y - 44)}px)`
+      } else labGhost.classList.add('hidden')
+    },
+    setGhostTime: (ms) => {
+      ghostTimeLine.innerHTML = ms !== null ? `today's ghost finishes in <b>${fmtTime(ms)}</b> — beat it` : ''
     },
   }
 }

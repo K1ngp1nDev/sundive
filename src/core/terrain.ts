@@ -34,9 +34,9 @@ export function buildTerrain(seedStr: string): Terrain {
   let crest = h
   while (x < RUN_LENGTH + RUNOUT) {
     const progress = Math.min(1, Math.max(0, x / RUN_LENGTH))
-    const amp = (11 + rnd() * 9) * (1 + progress * 0.9) // valleys deepen over the run
-    const downDx = 34 + rnd() * 40 // dive slope
-    const upDx = 44 + rnd() * 52 // launch ramp
+    const amp = (14 + rnd() * 11) * (1 + progress * 0.8) // deep, readable valleys
+    const downDx = 36 + rnd() * 42 // dive slope
+    const upDx = 46 + rnd() * 52 // launch ramp
     const netDrop = 7 + rnd() * 12 // canyon keeps descending
 
     const valley = crest - amp

@@ -69,11 +69,20 @@ await S(page, 'simSpeed', 1)
 await page.screenshot({ path: `${OUT}/sundive-launch.png` })
 console.log('shot sundive-launch')
 
-// ghost race: fresh run with a slightly different pace — ghost visibly alongside
+// ghost race: catch the moment both comets share the frame
 await S(page, 'restart')
-await S(page, 'botSloppiness', 0.5)
+await S(page, 'botSloppiness', 0.45)
 await S(page, 'autopilot', true)
-await huntMoment(page, 'ghost-race', () => window.__SUNDIVE__.timeMs() > 5500)
+await S(page, 'simSpeed', 2)
+await huntMoment(page, 'ghost-race', () => {
+  const gp = window.__SUNDIVE__.ghostPos()
+  const p = window.__SUNDIVE__.pos()
+  if (!gp) return false
+  const dx = gp[0] - p[0]
+  return window.__SUNDIVE__.timeMs() > 1500 && dx > 6 && dx < 55
+})
+await S(page, 'simSpeed', 1)
+await page.waitForTimeout(60)
 await page.screenshot({ path: `${OUT}/sundive-ghost-race.png` })
 console.log('shot sundive-ghost-race')
 await desk.close()

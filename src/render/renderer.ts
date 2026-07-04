@@ -6,7 +6,7 @@ import { radialGlow, skyTexture } from './textures'
 // The whole look: sunset canyon, gold ridge light, and the comet trail as the
 // hero element. World container is y-flipped (world y-up -> screen y-down).
 
-const PX_PER_M = 7
+const PX_PER_M = 8
 
 interface Particle {
   sp: Sprite
@@ -65,6 +65,8 @@ export class Renderer {
   private camY = 0
   private zoom = 1
   private trauma = 0
+  private zoomPop = 0
+  private shadow = new Graphics()
 
   constructor(app: Application) {
     this.app = app
@@ -126,10 +128,11 @@ export class Renderer {
     this.cometGlow = new Sprite(this.glowTexGold)
     this.cometGlow.anchor.set(0.5)
     this.cometGlow.blendMode = 'add'
+    this.world.addChild(this.shadow) // altitude cue: ground shadow while airborne
     this.world.addChild(this.trailG)
     this.world.addChild(this.fxLayer)
     this.world.addChild(this.cometGlow)
-    this.cometCore = new Graphics().circle(0, 0, 2.6).fill({ color: 0xffffff })
+    this.cometCore = new Graphics().circle(0, 0, 3.1).fill({ color: 0xffffff })
     this.world.addChild(this.cometCore)
 
     // finish + checkpoint pillars
@@ -234,6 +237,12 @@ export class Renderer {
     this.trauma = Math.min(1, this.trauma + n)
   }
 
+  /** Brief zoom-in pulse (launch feel). */
+  pop(): void {
+    if (getState().reducedMotion) return
+    this.zoomPop = 1
+  }
+
   flashScreen(color: number, alpha: number): void {
     const w = this.app.screen.width
     const h = this.app.screen.height
@@ -290,12 +299,14 @@ export class Renderer {
     // resizeTo can apply after init — keep the backdrop in sync with the canvas
     if (Math.abs(this.sky.width - w) > 1 || Math.abs(this.sky.height - h) > 1) this.resize()
 
-    // camera: comet sits ~34% from the left, zoom out with speed
-    const targetZoom = 1.08 - Math.min(0.46, Math.max(0, (speed - 14) / 105))
+    // camera: comet sits ~34% from the left; zoom out with speed, but keep the
+    // hills large enough that dives and arcs stay physically readable
+    const targetZoom = (1.12 - Math.min(0.34, Math.max(0, (speed - 14) / 130))) * (this.zoomPop > 0 ? 1 + this.zoomPop * 0.06 : 1)
+    this.zoomPop = Math.max(0, this.zoomPop - dt * 3)
     this.zoom += (targetZoom - this.zoom) * Math.min(1, dt * 3.2)
     const scale = PX_PER_M * this.zoom * Math.min(1, w / 900 + 0.35)
 
-    const lookAhead = Math.min(60, speed * 0.55)
+    const lookAhead = Math.min(48, speed * 0.45)
     const tx = px + lookAhead
     const ty = py + 8
     this.camX += (tx - this.camX) * Math.min(1, dt * 5)
@@ -325,6 +336,19 @@ export class Renderer {
     const glowSize = (3.2 + speed * 0.06) * (holding ? 1.25 : 1)
     this.cometGlow.width = this.cometGlow.height = glowSize * 2
     this.cometCore.position.set(px, py)
+
+    // altitude shadow: the classic "how high am I" cue
+    this.shadow.clear()
+    if (!grounded) {
+      const gy = this.terrain.heightAt(px)
+      const alt = Math.max(0, py - gy)
+      if (alt > 1.2) {
+        const k = Math.min(1, alt / 30)
+        this.shadow
+          .ellipse(px, gy + 0.25, 2.6 + k * 2.2, 0.7 + k * 0.4)
+          .fill({ color: 0x0a0820, alpha: 0.4 * (1 - k * 0.5) })
+      }
+    }
 
     this.trail.push(px, py, speed)
     const maxPts = 110
@@ -438,6 +462,14 @@ export class Renderer {
         g.lineTo(x1, y1)
         g.stroke({ width: wgt, color: 0x9fd8e8, alpha: 0.3 * k, cap: 'round' })
       }
+    }
+  }
+
+  /** World -> screen (CSS px) using the current camera transform. */
+  project(x: number, y: number): { x: number; y: number } {
+    return {
+      x: this.world.position.x + x * this.world.scale.x,
+      y: this.world.position.y + y * this.world.scale.y,
     }
   }
 

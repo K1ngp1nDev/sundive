@@ -58,6 +58,18 @@ class Game {
   autopilot = false
   private bot: ((s: import('./core/sim').SimState) => boolean) | null = null
   private attractTimeout = 0
+  private lastBotHeld = false
+  private aheadOfGhost: boolean | null = null
+  private lastOvertakeAt = -999
+  lastGhostPos: { x: number; y: number } | null = null
+  private taught = ((): boolean => {
+    try {
+      return localStorage.getItem('sundive:taught') === '1'
+    } catch {
+      return false
+    }
+  })()
+  private goodLaunches = 0
 
   constructor(
     private renderer: Renderer,
@@ -81,6 +93,18 @@ class Game {
     this.ghostCpTimes = ghostTimesAt(this.ghostData, cps)
     this.ghostFinishMs = this.ghostCpTimes[this.ghostCpTimes.length - 1]
     setState({ ghostSource: this.ghostData.source, pbMs: loadPB(seed) })
+    hud.setGhostTime(this.ghostFinishMs)
+  }
+
+  private markTaught(): void {
+    if (this.taught) return
+    this.taught = true
+    try {
+      localStorage.setItem('sundive:taught', '1')
+    } catch {
+      /* ignore */
+    }
+    hud.setCoach(null)
   }
 
   reset(phase: 'attract' | 'running'): void {
@@ -128,9 +152,14 @@ class Game {
           this.renderer.flashScreen(0xffd27a, 0.1)
           hud.toast('Perfect launch')
           playPerfect()
+          this.markTaught()
           break
         case 'launch':
-          if ((ev.intensity ?? 0) > 0.25) playLaunch()
+          if ((ev.intensity ?? 0) > 0.25) {
+            playLaunch()
+            this.renderer.pop()
+            if (++this.goodLaunches >= 2) this.markTaught()
+          }
           break
         case 'slam': {
           const k = ev.intensity ?? 0.5
@@ -160,6 +189,8 @@ class Game {
           this.onFinish()
           break
         case 'start':
+          this.aheadOfGhost = null
+          hud.banner('Beat the ghost to the finish', 'gold', 2200)
           break
       }
     }
@@ -187,7 +218,9 @@ class Game {
       this.timeScale = 0.22
       this.slowmoHold = 0.9
     }
-    this.renderer.flashScreen(0xffd27a, 0.16)
+    const won = vsGhost !== null && vsGhost <= 0
+    hud.banner(won ? 'You win!' : 'The ghost wins', won ? 'gold' : 'ice', 1600)
+    this.renderer.flashScreen(won ? 0xffd27a : 0x9fd8e8, 0.16)
     this.renderer.addTrauma(0.2)
     playFinish(newBest)
     hud.showFinish()
@@ -218,6 +251,7 @@ class Game {
       if (this.autopilot && this.bot) held = this.bot(this.sim.state)
       else if (st.phase === 'attract') held = this.bot ? this.bot(this.sim.state) : false
       else held = this.input.isHeld()
+      this.lastBotHeld = held
 
       this.recorder.record(this.sim.state)
       const events = this.sim.step(held)
@@ -245,8 +279,57 @@ class Game {
       this.ghost && st.phase !== 'attract' && s.startTick >= 0
         ? this.ghost.at(s.tick, s.startTick)
         : null
+    this.lastGhostPos = ghostPos
     this.renderer.render(s.x, s.y, this.sim.speed(), this.input.isHeld(), s.grounded, ghostPos, rawDt)
     updateAudio(this.sim.speed(), this.input.isHeld() && st.phase === 'running')
+
+    // course progress dots
+    const prog = Math.max(0, Math.min(1, s.x / this.terrain.length))
+    const gprog = ghostPos ? Math.max(0, Math.min(1, ghostPos.x / this.terrain.length)) : 0
+    setState({ progress: prog, ghostProgress: gprog })
+
+    // overtake drama: who leads, announced on every lead change (rate-limited)
+    if (st.phase === 'running' && ghostPos && s.startTick >= 0 && s.finishTick < 0) {
+      const ahead = s.x > ghostPos.x
+      if (this.aheadOfGhost === null) {
+        this.aheadOfGhost = ahead
+      } else if (ahead !== this.aheadOfGhost && st.timeMs - this.lastOvertakeAt > 1500) {
+        this.aheadOfGhost = ahead
+        this.lastOvertakeAt = st.timeMs
+        if (ahead) {
+          hud.banner('Ahead!', 'gold', 1000)
+          playCheckpoint(true)
+        } else {
+          hud.banner('Behind — dive!', 'bad', 1200)
+          playCheckpoint(false)
+        }
+      }
+    }
+
+    // --- onboarding layer: demo input, coach prompts, comet labels
+    if (st.phase === 'attract') {
+      hud.setDemoInput(true, this.lastBotHeld)
+      hud.setCoach(null)
+      hud.setLabels(null, null)
+    } else if (st.phase === 'running' && !this.taught) {
+      hud.setDemoInput(true, this.input.isHeld())
+      const slope = this.terrain.slopeAt(s.x)
+      const heldNow = this.input.isHeld()
+      if (s.grounded && slope < -0.04 && !heldNow && this.sim.speed() < 55) hud.setCoach('Hold — dive!')
+      else if (s.grounded && heldNow && slope > 0.03) hud.setCoach('Release — fly!')
+      else hud.setCoach(null)
+      const you = this.renderer.project(s.x, s.y)
+      hud.setLabels(you, ghostPos ? this.renderer.project(ghostPos.x, ghostPos.y) : null)
+    } else if (st.phase === 'running' && this.sim.timeMs() < 5000 && ghostPos) {
+      // even for taught players, name the rival for the first seconds of a run
+      hud.setDemoInput(false, false)
+      hud.setCoach(null)
+      hud.setLabels(this.renderer.project(s.x, s.y), this.renderer.project(ghostPos.x, ghostPos.y))
+    } else {
+      hud.setDemoInput(false, false)
+      hud.setCoach(null)
+      hud.setLabels(null, null)
+    }
   }
 
   shareText(): string {
@@ -326,6 +409,7 @@ const boot = async (): Promise<void> => {
     autopilot: (on: boolean) => (game.autopilot = on),
     botSloppiness: (n: number) => game.setBotSloppiness(n),
     grounded: () => game.sim.state.grounded,
+    ghostPos: () => (game.lastGhostPos ? [game.lastGhostPos.x, game.lastGhostPos.y] : null),
     simSpeed: (n: number) => (game.simSpeed = Math.max(0.1, Math.min(qaMode ? 400 : 1, n))),
     tick: () => game.sim.state.tick,
   }

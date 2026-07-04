@@ -15,6 +15,8 @@ export interface AppState {
   lastMs: number | null
   newBest: boolean
   holding: boolean
+  progress: number // 0..1 along the course
+  ghostProgress: number
   muted: boolean
   reducedMotion: boolean
   ready: boolean
@@ -34,6 +36,8 @@ const state: AppState = {
   lastMs: null,
   newBest: false,
   holding: false,
+  progress: 0,
+  ghostProgress: 0,
   muted: false,
   reducedMotion: false,
   ready: false,
