@@ -119,7 +119,7 @@ npx esbuild scripts/telemetry.ts --bundle --format=esm --outfile=/tmp/st.mjs && 
 ```bash
 npm run build
 npm run shots      # regenerates docs/screenshots/*.png (6 shots, across biomes)
-npm run qa         # Playwright: 29 checks
+npm run qa         # Playwright: 30 checks
 ```
 
 QA verifies: loads without console errors, canvas non-blank, level N fields N
