@@ -17,7 +17,7 @@ per-level daily seeds, best-time tracking.
 | **Hold** mouse / touch | dive — grip the slope, build speed |
 | **release** | soar — launch off the crest with your momentum |
 | **Space** / JUMP | hop — clear a hazard, or land on a rival to stun it |
-| **Shift / Enter** / NITRO | fire nitro — a burst of speed (recharges ~5 s) |
+| **Shift** / NITRO | fire nitro — a burst of speed (recharges ~5 s) |
 | **R** / ↺ | instant restart · **M** sound |
 
 ## The race
