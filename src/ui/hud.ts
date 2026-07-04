@@ -115,14 +115,23 @@ export function createHud(deps: HudDeps): Hud {
       const b = tc.querySelector(sel) as HTMLElement
       b.addEventListener('pointerdown', (e) => { e.preventDefault(); fn() })
     }
+    // Each hold pad captures its own pointer, so multi-touch (e.g. hold GO + tap
+    // JUMP) works — a pad only releases when its own finger lifts, not on any tap.
     const hold = (sel: string, set: (v: boolean) => void) => {
       const b = tc.querySelector(sel) as HTMLElement
-      const on = (e: Event) => { e.preventDefault(); b.classList.add('down'); set(true) }
-      const off = () => { b.classList.remove('down'); set(false) }
-      b.addEventListener('pointerdown', on)
+      let pid: number | null = null
+      b.addEventListener('pointerdown', (e) => {
+        e.preventDefault(); pid = (e as PointerEvent).pointerId
+        try { b.setPointerCapture(pid) } catch { /* ignore */ }
+        b.classList.add('down'); set(true)
+      })
+      const off = (e: Event) => {
+        if (pid !== null && (e as PointerEvent).pointerId !== pid) return
+        pid = null; b.classList.remove('down'); set(false)
+      }
       b.addEventListener('pointerup', off)
-      b.addEventListener('pointerleave', off)
       b.addEventListener('pointercancel', off)
+      b.addEventListener('lostpointercapture', off)
     }
     tap('.jump', () => deps.onJump())
     tap('.boost', () => deps.onBoost())
@@ -130,8 +139,8 @@ export function createHud(deps: HudDeps): Hud {
     hold('.go', deps.setGo)
     hold('.brake', deps.setBrake)
     hold('.rev', deps.setReverse)
-    // safety: releasing anywhere clears held pads
-    window.addEventListener('pointerup', () => { deps.setGo(false); deps.setBrake(false); deps.setReverse(false); tc.querySelectorAll('.down').forEach((e) => e.classList.remove('down')) })
+    // safety net: losing focus clears any stuck pad
+    window.addEventListener('blur', () => { deps.setGo(false); deps.setBrake(false); deps.setReverse(false); tc.querySelectorAll('.down').forEach((e) => e.classList.remove('down')) })
   }
 
   // ---- start overlay

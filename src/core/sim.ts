@@ -37,7 +37,6 @@ const BOOST_TIME = 1.15 // seconds of thrust per charge
 const STUN_DRAG = 0.955 // per-tick velocity decay while stunned
 // track features
 const PAD_IMPULSE = 42 // trampoline launch velocity (apex ~26 m)
-const PAD_COOLDOWN = 24 // ticks before a pad can fire again
 const PIT_CLEAR = 2.6 // must be this high over a pit to sail across; lower = you fall in
 const PIT_FALL_TIME = 0.3 // seconds dropping into a pit before you respawn
 const PIT_REWIND = 30 // respawn this far before the pit mouth
@@ -105,7 +104,7 @@ export class CometSim {
   private wasBoosting = false
   private pits: [number, number][] = []
   private pads: number[] = []
-  private padCd = 0
+  private lastPadX = -Infinity
   private respawnX = 0
   private brakeInput = false
   private reverseInput = false
@@ -143,9 +142,9 @@ export class CometSim {
     for (const p of this.pits) if (x >= p[0] && x <= p[1]) return p
     return null
   }
-  private nearPad(x: number): boolean {
-    for (const px of this.pads) if (Math.abs(px - x) < 2.6) return true
-    return false
+  private padAt(x: number): number | null {
+    for (const px of this.pads) if (Math.abs(px - x) < 2.6) return px
+    return null
   }
 
   /** Queue a hop; consumed next time the comet is grounded (short input buffer). */
@@ -183,7 +182,6 @@ export class CometSim {
     if (boosting && !this.wasBoosting) this.events.push({ type: 'boost', x: s.x, y: s.y })
     this.wasBoosting = boosting
     if (this.jumpBuffer > 0) this.jumpBuffer--
-    if (this.padCd > 0) this.padCd--
     held = held && !stunned && !this.brakeInput && !this.reverseInput // brake/reverse override dive
 
     if (held) {
@@ -324,12 +322,15 @@ export class CometSim {
       this.events.push({ type: 'jump', x: s.x, y: s.y })
     }
 
-    // trampoline: a big automatic bounce when you cross a pad on the ground
-    if (this.padCd <= 0 && groundedNow && !stunned && this.nearPad(s.x)) {
+    // trampoline: a big automatic bounce when you cross a pad on the ground. Fire
+    // once per pad (until you pass it) and never while braking, so braking on a pad
+    // stops you instead of trapping you in an endless in-place bounce.
+    const pad = this.padAt(s.x)
+    if (pad !== null && pad > this.lastPadX && groundedNow && !stunned && !this.brakeInput) {
       s.vy = PAD_IMPULSE
       s.y += 0.05
       groundedNow = false
-      this.padCd = PAD_COOLDOWN
+      this.lastPadX = pad
       this.events.push({ type: 'pad', x: s.x, y: s.y })
     }
 

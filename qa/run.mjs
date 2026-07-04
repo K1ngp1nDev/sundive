@@ -189,6 +189,16 @@ const S = (page, fn, ...a) => page.evaluate(({ fn, a }) => window.__SUNDIVE__[fn
   await page.waitForTimeout(300); const tk2 = await S(page, 'tick')
   await page.keyboard.press('Escape'); await page.waitForTimeout(60); const resumed = !(await S(page, 'state')).paused
   check('pause (Esc) freezes + resumes', p1 && tk1 === tk2 && resumed, `paused=${p1} frozen=${tk1 === tk2} resumed=${resumed}`)
+
+  // focus loss must flush held keys (else a key released while alt-tabbed stays stuck on)
+  await S(page, 'restart')
+  await page.keyboard.down('KeyD'); await page.waitForTimeout(50)
+  const heldBefore = (await S(page, 'driving')).held
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')))
+  await page.waitForTimeout(30)
+  const heldAfter = (await S(page, 'driving')).held
+  await page.keyboard.up('KeyD')
+  check('focus loss clears held keys', heldBefore === true && heldAfter === false, `held ${heldBefore} -> ${heldAfter}`)
   await ctx.close()
 }
 

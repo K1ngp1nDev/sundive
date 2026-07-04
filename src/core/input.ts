@@ -33,11 +33,19 @@ export class Input {
       e.preventDefault()
     }
     const up = () => (this.pointerHeld = false)
+    // Losing focus never delivers keyup, so flush ALL held state or a key released
+    // while alt-tabbed would stay stuck 'on'.
+    const clearAll = () => {
+      this.pointerHeld = false
+      this.goKeys.clear(); this.brakeKeys.clear(); this.reverseKeys.clear()
+      this.touchGo = this.touchBrake = this.touchReverse = false
+    }
 
     stage.addEventListener('pointerdown', down)
     window.addEventListener('pointerup', up)
     window.addEventListener('pointercancel', up)
-    window.addEventListener('blur', up)
+    window.addEventListener('blur', clearAll)
+    document.addEventListener('visibilitychange', () => { if (document.hidden) clearAll() })
 
     window.addEventListener('keydown', (e) => {
       const c = e.code
