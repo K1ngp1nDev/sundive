@@ -418,7 +418,7 @@ class Game {
     const states: RacerRender[] = this.field.all.map((r) => {
       const s = r.sim.state
       return {
-        x: s.x, y: s.y, speed: r.sim.speed(),
+        x: s.x, y: s.y, vy: s.vy, speed: r.sim.speed(),
         holding: r.isPlayer ? this.input.isHeld() : false,
         grounded: s.grounded, boosting: r.sim.boosting, stunned: r.sim.stunned,
         isPlayer: r.isPlayer, color: r.color,
@@ -462,6 +462,11 @@ class Game {
   }
 
   private attractHeld = false
+
+  screenPos(): { x: number; y: number } {
+    return this.renderer.project(this.player.sim.state.x, this.player.sim.state.y)
+  }
+
   private labelList(): { x: number; y: number; text: string; color: number }[] {
     const out: { x: number; y: number; text: string; color: number }[] = []
     const pp = this.renderer.project(this.player.sim.state.x, this.player.sim.state.y)
@@ -556,6 +561,7 @@ const boot = async (): Promise<void> => {
     boostActive: () => getState().boostActive,
     grounded: () => game.player.sim.state.grounded,
     clr: () => game.player.sim.state.y - game.terrain.heightAt(game.player.sim.state.x),
+    screenPos: () => game.screenPos(),
     hold: (v: boolean | null) => input.force(v),
     jump: () => game.playerJump(),
     fireBoost: () => { setState({ boost: 1, boostReady: true }); game.playerBoost() },

@@ -308,6 +308,26 @@ const S = (page, fn, ...a) => page.evaluate(({ fn, a }) => window.__SUNDIVE__[fn
   await ctx.close()
 }
 
+// ---- mobile falling camera: high jumps should show the landing area below
+{
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
+  const { page } = await open(ctx, `${URL}/?qa=1&date=2026-07-04&level=1`)
+  await S(page, 'begin'); await S(page, 'restart'); await S(page, 'hold', false)
+  await page.waitForFunction(() => window.__SUNDIVE__.grounded() && window.__SUNDIVE__.timeMs() > 300, { timeout: 8000 })
+  await S(page, 'jump')
+  await page.waitForFunction(() => {
+    const v = window.__SUNDIVE__.vel()
+    return !window.__SUNDIVE__.grounded() && v[1] < -4 && window.__SUNDIVE__.clr() > 5
+  }, { timeout: 8000 })
+  await page.waitForTimeout(220)
+  const framing = await page.evaluate(() => {
+    const screen = window.__SUNDIVE__.screenPos()
+    return { y: screen.y, ratio: screen.y / innerHeight, clearance: window.__SUNDIVE__.clr() }
+  })
+  check('mobile falling camera leaves landing room below', framing.ratio < 0.47 && framing.ratio > 0.26, JSON.stringify(framing))
+  await ctx.close()
+}
+
 // ---- daily seed stability
 {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } })

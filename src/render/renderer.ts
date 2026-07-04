@@ -38,6 +38,7 @@ interface Ring { g: Graphics; x: number; y: number; max: number; color: number; 
 export interface RacerRender {
   x: number
   y: number
+  vy: number
   speed: number
   holding: boolean
   grounded: boolean
@@ -108,6 +109,13 @@ export class Renderer {
     if (coarse && w > h) return 0.66
     if (w <= 760) return 0.78
     return 1
+  }
+
+  private cameraAnchorY(w: number, h: number): number {
+    const coarse = window.matchMedia?.('(pointer: coarse)').matches || navigator.maxTouchPoints > 0
+    if (h <= 520) return h * 0.62
+    if (coarse && h > w) return h * 0.43
+    return h * 0.52
   }
 
   init(terrain: Terrain, biome: Biome = 'sunset'): void {
@@ -411,11 +419,22 @@ export class Renderer {
     this.zoomPop = Math.max(0, this.zoomPop - dt * 3)
     this.zoom += (targetZoom - this.zoom) * Math.min(1, dt * 3.2)
     const scale = PX_PER_M * this.zoom * Math.min(1, w / 900 + 0.35)
-    const lookAhead = Math.min(48, player.speed * 0.45)
+    const landingX = player.x + Math.min(72, player.speed * 0.7)
+    const groundNow = this.terrain.heightAt(player.x)
+    const groundAhead = this.terrain.heightAt(landingX)
+    const clearance = Math.max(0, player.y - groundNow)
+    const descend = Math.max(0, Math.min(1, (-player.vy - 1.5) / 24))
+    const airborne = player.grounded ? 0 : Math.max(0, Math.min(1, clearance / 24))
+    const fallingBlend = player.vy < 0 ? Math.max(descend, 0.35) : 0
+    const landingBlend = fallingBlend * airborne
+    const landingFocusY = player.y + 5 + (groundAhead - player.y) * 0.92 * landingBlend
+    const minFocusY = player.y + 5 - 30
+    const focusY = Math.max(minFocusY, Math.min(player.y + 8, landingFocusY))
+    const lookAhead = Math.min(54, player.speed * 0.45) + landingBlend * Math.min(34, player.speed * 0.24)
     this.camX += (player.x + lookAhead - this.camX) * Math.min(1, dt * 5)
-    this.camY += (player.y + 8 - this.camY) * Math.min(1, dt * 4)
+    this.camY += (focusY - this.camY) * Math.min(1, dt * (4 + landingBlend * 4))
     this.world.scale.set(scale, -scale)
-    this.world.position.set(w * 0.34 - this.camX * scale, (h <= 520 ? h * 0.58 : h * 0.52) + this.camY * scale)
+    this.world.position.set(w * 0.34 - this.camX * scale, this.cameraAnchorY(w, h) + this.camY * scale)
 
     this.trauma = Math.max(0, this.trauma - dt * 1.7)
     const s2 = this.trauma * this.trauma
