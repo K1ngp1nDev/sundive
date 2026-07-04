@@ -176,7 +176,7 @@ export function createHud(deps: HudDeps): Hud {
   window.addEventListener('keydown', (e) => { if (e.code === 'KeyM') { unlockAudio(); toggleMute() } })
 
   // ---- reactive
-  let hintTimer: number | null = null
+  let lastPhase = ''
   subscribe((s) => {
     timeT.textContent = fmtTime(s.timeMs)
     if (s.phase === 'running' && s.place) {
@@ -191,13 +191,14 @@ export function createHud(deps: HudDeps): Hud {
     nitroLbl.textContent = s.boostReady ? 'NITRO ▸' : 'NITRO'
 
     hud.classList.toggle('show', s.phase !== 'attract')
-    if (s.phase === 'attract') renderStart()
-    start.classList.toggle('hidden', s.phase !== 'attract')
-    if (s.phase === 'finished') renderFinish()
-    fin.classList.toggle('hidden', s.phase !== 'finished')
-
-    if (s.phase === 'running' && hintTimer === null) hintTimer = window.setTimeout(() => { /* hint managed by coach now */ }, 3500)
-    if (s.phase === 'attract' && hintTimer !== null) { clearTimeout(hintTimer); hintTimer = null }
+    // render overlays only on phase transition (state changes every frame while running)
+    if (s.phase !== lastPhase) {
+      if (s.phase === 'attract') renderStart()
+      if (s.phase === 'finished') renderFinish()
+      start.classList.toggle('hidden', s.phase !== 'attract')
+      fin.classList.toggle('hidden', s.phase !== 'finished')
+      lastPhase = s.phase
+    }
   })
 
   return {

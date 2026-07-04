@@ -120,7 +120,7 @@ class Game {
     else this.reset('running')
   }
   restart(): void { this.reset('running') }
-  nextLevel(): void { this.setLevel(Math.min(5, this.level + 1), this.daily) }
+  nextLevel(): void { this.setLevel(Math.min(5, this.level + 1), this.daily); this.begin() }
 
   playerJump(): void {
     if (getState().phase !== 'running') return
@@ -449,7 +449,7 @@ const boot = async (): Promise<void> => {
 
   hud = createHud({
     onRestart: () => game.restart(),
-    onLevel: (lvl, daily) => game.setLevel(lvl, daily),
+    onLevel: (lvl, daily) => { game.setLevel(lvl, daily); game.begin() },
     onNext: () => game.nextLevel(),
     onJump: () => game.playerJump(),
     onBoost: () => game.playerBoost(),

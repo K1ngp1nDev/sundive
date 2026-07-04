@@ -46,6 +46,11 @@ const S = (page, fn, ...a) => page.evaluate(({ fn, a }) => window.__SUNDIVE__[fn
 
   check('level 2 has 2 rivals', (await S(page, 'opponents')) === 2, `opponents=${await S(page, 'opponents')}`)
 
+  // the Race button actually starts a run
+  await page.click('.big-btn', { timeout: 4000 }).catch(() => {})
+  await page.waitForTimeout(200)
+  check('Race button starts the run', (await S(page, 'phase')) === 'running', `phase=${await S(page, 'phase')}`)
+
   // hold/release changes trajectory
   await S(page, 'begin'); await S(page, 'restart')
   await S(page, 'hold', false); await S(page, 'simSpeed', 50)
